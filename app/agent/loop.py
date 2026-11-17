@@ -14,8 +14,9 @@ process can die at any moment and the run continues from the last checkpoint.
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable
 
 from app.agent.context import build_context
 from app.agent.prompts import SYSTEM_PROMPT
@@ -26,14 +27,13 @@ from app.llm.base import LLM, LLMError, ToolCall
 from app.tools.registry import ToolRegistry, execute_with_retry
 
 CONTINUE, STOP = "continue", "stop"
-CONTROL_TOOLS = {"update_plan", "finish_triage"}
 
 
 class Agent:
     def __init__(self, db: DB, llm: LLM, registry: ToolRegistry, settings: Settings,
                  sleep: Callable[[float], None] | None = None):
         self.db, self.llm, self.registry, self.s = db, llm, registry, settings
-        self.sleep = sleep or __import__("time").sleep
+        self.sleep = sleep or time.sleep
 
     # ------------------------------------------------------------------ helpers
     def _event(self, run_id: str, step: int, type_: str, **data) -> None:
@@ -158,7 +158,8 @@ class Agent:
             return STOP
         n += 1
         t_in, t_out = t_in + decision.tokens_in, t_out + decision.tokens_out
-        cost = decision.tokens_in / 1e6 * self.s.price_input_per_m + decision.tokens_out / 1e6 * self.s.price_output_per_m
+        cost = (decision.tokens_in / 1e6 * self.s.price_input_per_m
+                + decision.tokens_out / 1e6 * self.s.price_output_per_m)
         self._event(run_id, n, "llm_call", model=decision.model, tokens_in=decision.tokens_in,
                     tokens_out=decision.tokens_out, latency_ms=decision.latency_ms, cost_usd=round(cost, 6),
                     context_layers=layers, memories_used=len(memories))

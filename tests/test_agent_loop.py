@@ -58,7 +58,9 @@ def test_prompt_injection_in_logs_is_flagged_and_cannot_bypass_gate(db_path):
 
 def test_long_term_memory_is_recalled_in_next_run(db_path):
     rt, db = make_runtime(db_path)
-    r1 = rt.wait(rt.start_run("bad-deploy")["id"]); rt.decide(r1["id"], True); rt.wait(r1["id"])
+    r1 = rt.wait(rt.start_run("bad-deploy")["id"])
+    rt.decide(r1["id"], True)
+    rt.wait(r1["id"])
     assert db.list_memory()[0]["service"] == "payments-api"
     r2 = rt.wait(rt.start_run("bad-deploy")["id"])
     llm_calls = [e for e in db.events(r2["id"]) if e["type"] == "llm_call"]

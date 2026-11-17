@@ -14,9 +14,10 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -70,7 +71,6 @@ CREATE TABLE IF NOT EXISTS memory (
 );
 """
 
-ACTIVE = ("pending", "running")
 TERMINAL = ("completed", "escalated", "failed", "cancelled")
 
 
@@ -158,9 +158,11 @@ class DB:
         """Conditional status transition. Returns False if the run was not in an expected state."""
         sets, params = ["status=?", "updated_at=?"], [new, time.time()]
         if error is not None:
-            sets.append("error=?"); params.append(error)
+            sets.append("error=?")
+            params.append(error)
         if report is not None:
-            sets.append("report=?"); params.append(json.dumps(report))
+            sets.append("report=?")
+            params.append(json.dumps(report))
         sql = f"UPDATE runs SET {', '.join(sets)} WHERE id=?"
         params.append(run_id)
         if expected is not None:

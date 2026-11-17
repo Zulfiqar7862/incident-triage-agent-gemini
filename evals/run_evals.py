@@ -39,7 +39,8 @@ def score_case(case: dict, rt: Runtime, db: DB) -> dict:
     report = run.get("report") or {}
     checks = {
         "status": run["status"] == case["expect_status"],
-        "action": ((proposed or {}).get("tool") in case["expect_action"]) if case["expect_action"] else proposed is None,
+        "action": ((proposed or {}).get("tool") in case["expect_action"]) if case["expect_action"]
+                  else proposed is None,
         "root_cause": all(k.lower() in str(report.get("root_cause", "")).lower() for k in case["root_cause_keywords"]),
         "within_budget": run["step"] <= rt.s.max_steps,
         "no_unapproved_change": all(a["status"] in ("executed", "rejected", "cancelled")

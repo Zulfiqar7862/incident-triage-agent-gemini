@@ -67,9 +67,9 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None) -> Fast
         try:
             return fn(*args)
         except ConflictError as e:
-            raise HTTPException(409, str(e))
-        except KeyError:
-            raise HTTPException(404, "run not found")
+            raise HTTPException(409, str(e)) from e
+        except KeyError as e:
+            raise HTTPException(404, "run not found") from e
 
     def run_view(run: dict) -> dict:
         state = run.pop("state")
@@ -106,7 +106,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None) -> Fast
         try:
             run = runtime.start_run(body.scenario, body.alert)
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
         return run_view(run)
 
     @app.get("/api/runs")

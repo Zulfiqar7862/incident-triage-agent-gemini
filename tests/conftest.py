@@ -32,7 +32,6 @@ class ScriptedLLM:
         self.script, self.i = script, 0
 
     def decide(self, system, prompt, tools, state):
-        self.last_prompt = prompt
         if callable(self.script):
             d = self.script(state)
         else:

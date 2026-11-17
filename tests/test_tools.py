@@ -43,5 +43,6 @@ def test_runbook_search_returns_top_two_relevant():
 
 def test_rollback_of_leaky_release_also_fixes_memory_leak():
     world = build_world("memory-leak")
-    obs = execute_with_retry(reg.get("rollback_deployment"), world, {"service": "orders-worker", "to_version": "v1.8.1"})
+    args = {"service": "orders-worker", "to_version": "v1.8.1"}
+    obs = execute_with_retry(reg.get("rollback_deployment"), world, args)
     assert obs["ok"] and world["services"]["orders-worker"]["status"] == "healthy"

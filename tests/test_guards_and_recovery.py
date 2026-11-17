@@ -63,7 +63,8 @@ def test_unknown_tool_and_no_tool_reply_are_handled(db_path):
 
 
 def test_only_one_risky_action_per_turn(db_path):
-    script = [decision(call("restart_service", service="payments-api"), call("scale_service", service="search-api", replicas=4))]
+    script = [decision(call("restart_service", service="payments-api"),
+                       call("scale_service", service="search-api", replicas=4))]
     rt, db = make_runtime(db_path, llm=ScriptedLLM(script))
     run = rt.wait(rt.start_run("bad-deploy")["id"])
     assert run["status"] == "waiting_approval" and len(db.list_approvals(run["id"])) == 1

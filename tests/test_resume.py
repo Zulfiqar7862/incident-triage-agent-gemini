@@ -1,5 +1,6 @@
 """Durable execution: state survives a process restart (simulated by a brand-new Runtime + DB connection)."""
 from app.agent.loop import CONTINUE
+from app.sim.world import build_world
 from tests.conftest import make_runtime
 
 
@@ -21,7 +22,7 @@ def test_restart_while_waiting_for_approval(db_path):
 def test_crash_mid_run_resumes_from_last_checkpoint(db_path):
     rt1, db1 = make_runtime(db_path)
     run = db1.create_run("bad-deploy", "t", "payments-api errors", "mock",
-                         {"world": __import__("app.sim.world", fromlist=["x"]).build_world("bad-deploy"),
+                         {"world": build_world("bad-deploy"),
                           "steps": [], "notes": [], "pending": None})
     db1.set_status(run["id"], "running")
     assert rt1.agent.step(run["id"]) == CONTINUE   # plan
@@ -57,7 +58,7 @@ def test_approved_action_runs_exactly_once_across_a_crash(db_path):
 
 def test_pause_and_resume(db_path):
     rt, db = make_runtime(db_path)
-    rid = db.create_run("bad-deploy", "t", "a", "mock", {"world": __import__("app.sim.world", fromlist=["x"]).build_world("bad-deploy"),
+    rid = db.create_run("bad-deploy", "t", "a", "mock", {"world": build_world("bad-deploy"),
                                                        "steps": [], "notes": [], "pending": None})["id"]
     db.set_status(rid, "paused")
     rt.resume(rid)

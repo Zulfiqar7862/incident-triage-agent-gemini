@@ -8,7 +8,6 @@ Prometheus, Loki, ArgoCD, etc. instead.
 """
 from __future__ import annotations
 
-import copy
 from typing import Any
 
 HEALTHY = {"error_rate_pct": 0.2, "p99_latency_ms": 180, "cpu_pct": 35, "memory_pct": 45, "rps": 120}
@@ -120,7 +119,3 @@ def build_world(scenario: str) -> dict:
 
     return w
 
-
-def snapshot(world: dict) -> dict:
-    """Deep copy, so callers can't accidentally mutate the stored world."""
-    return copy.deepcopy(world)
