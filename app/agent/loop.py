@@ -152,7 +152,9 @@ class Agent:
         self._event(run_id, n, "llm_call", model=decision.model, tokens_in=decision.tokens_in,
                     tokens_out=decision.tokens_out, latency_ms=decision.latency_ms, cost_usd=round(cost, 6),
                     context_layers=layers, memories_used=len(memories))
-        self._event(run_id, n, "thought", text=decision.thought or "(no reasoning given)")
+        if not decision.thought:  # some models skip the text part; still tell the operator what is happening
+            decision.thought = "(no reasoning text from model) calling " + ", ".join(c.name for c in decision.calls)
+        self._event(run_id, n, "thought", text=decision.thought)
         if t_in + t_out >= 0.8 * self.s.max_run_tokens:
             self._event(run_id, n, "warning", message="Over 80% of the run token budget used.")
 
