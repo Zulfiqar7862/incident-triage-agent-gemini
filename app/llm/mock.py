@@ -88,9 +88,13 @@ class MockLLM:
             return (prefix + f"{target} is unhealthy. Gathering {', '.join(missing)} in parallel{retry_note}.",
                     [ToolCall(t, {"service": target}) for t in missing])
 
-        metrics = (_last_ok(state, "get_metrics", service=target) or {}).get("data") or {}
-        logs = (_last_ok(state, "get_logs", service=target) or {}).get("data") or []
-        deps = (_last_ok(state, "get_recent_deployments", service=target) or {}).get("data") or []
+        # diagnose from evidence gathered BEFORE any mitigation (post-fix metrics look healthy)
+        all_calls = _calls(state)
+        cutoff = next((i for i, c in enumerate(all_calls) if c.get("risky")), len(all_calls))
+        before = {"steps": [{"calls": all_calls[:cutoff]}]}
+        metrics = (_last_ok(before, "get_metrics", service=target) or {}).get("data") or {}
+        logs = (_last_ok(before, "get_logs", service=target) or {}).get("data") or []
+        deps = (_last_ok(before, "get_recent_deployments", service=target) or {}).get("data") or []
         cur = metrics.get("current", {})
 
         diagnosis = self._diagnose(target, cur, logs, deps, listing["data"])
@@ -115,9 +119,10 @@ class MockLLM:
                     [self._finish(diagnosis["root_cause"], diagnosis["severity"], [target], [],
                                   [f"Mitigation not applied: {reason}", *diagnosis["follow_ups"]], 0.5)])
 
-        after = [c for c in _calls(state) if _match(c, "get_metrics", {"service": target})]
-        verified = after and after[-1] is not None and _calls(state).index(after[-1]) > _calls(state).index(last)
-        if not verified:
+        all_calls = _calls(state)
+        action_idx = max(i for i, c in enumerate(all_calls) if c.get("risky"))
+        after = [c for c in all_calls[action_idx + 1:] if _match(c, "get_metrics", {"service": target}) and c.get("ok")]
+        if not after:
             return prefix + "Mitigation applied. Verifying with fresh metrics.", [
                 ToolCall("get_metrics", {"service": target})]
         now = after[-1].get("data", {}).get("current", {})
