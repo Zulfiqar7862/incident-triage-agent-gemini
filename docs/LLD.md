@@ -92,23 +92,23 @@ classDiagram
 
 | File | Main contents |
 |---|---|
-| `app/config.py` | `Settings` dataclass (env + `.env` via python-dotenv). `llm_mode` = gemini if key else mock |
-| `app/db.py` | `DB` class, schema, conditional status updates, transactions |
-| `app/agent/runtime.py` | `Runtime` - lifecycle (start, pause, resume, cancel, decide, guidance), worker threads, `recover()` |
-| `app/agent/loop.py` | `Agent.step()` - the thin step loop that calls the modules below |
-| `app/agent/state.py` | `RunState` (typed view of a `runs` row), `Checkpointer.save()`, `cost_usd()` |
-| `app/agent/planner.py` | `Planner.next_decision()` - memory recall + `build_context()` + `llm.decide()` |
-| `app/agent/executor.py` | `Executor.run()` / `run_parallel()` - registry, validation, retry/backoff, injection flag |
-| `app/agent/approval.py` | `ApprovalGate` (pending approval, rejected-action record) and `route()` (completed vs escalated) |
-| `app/agent/guards.py` | `limit_reached()`, `near_token_budget()`, `is_repeated()` (loop guard) |
-| `app/agent/context.py` | `build_context()` -> `(prompt, layer_stats)` |
-| `app/agent/prompts.py` | `SYSTEM_PROMPT` |
-| `app/agent/safety.py` | `looks_like_injection()`, `redact()` |
-| `app/llm/gemini.py` | `GeminiLLM`, `parse_response()`, `retry_delay()` |
-| `app/llm/mock.py` | `MockLLM` rule-based policy |
-| `app/tools/registry.py` | `Tool`, `ToolRegistry`, `validate_args()`, `execute_with_retry()` |
-| `app/tools/infra_tools.py` | tool functions + `build_registry()` |
-| `app/sim/world.py` | `SCENARIOS`, `build_world()` |
+| `src/incident_triage_agent/config.py` | `Settings` dataclass (env + `.env` via python-dotenv). `llm_mode` = gemini if key else mock |
+| `src/incident_triage_agent/db.py` | `DB` class, schema, conditional status updates, transactions |
+| `src/incident_triage_agent/agent/runtime.py` | `Runtime` - lifecycle (start, pause, resume, cancel, decide, guidance), worker threads, `recover()` |
+| `src/incident_triage_agent/agent/loop.py` | `Agent.step()` - the thin step loop that calls the modules below |
+| `src/incident_triage_agent/agent/state.py` | `RunState` (typed view of a `runs` row), `Checkpointer.save()`, `cost_usd()` |
+| `src/incident_triage_agent/agent/planner.py` | `Planner.next_decision()` - memory recall + `build_context()` + `llm.decide()` |
+| `src/incident_triage_agent/agent/executor.py` | `Executor.run()` / `run_parallel()` - registry, validation, retry/backoff, injection flag |
+| `src/incident_triage_agent/agent/approval.py` | `ApprovalGate` (pending approval, rejected-action record) and `route()` (completed vs escalated) |
+| `src/incident_triage_agent/agent/guards.py` | `limit_reached()`, `near_token_budget()`, `is_repeated()` (loop guard) |
+| `src/incident_triage_agent/agent/context.py` | `build_context()` -> `(prompt, layer_stats)` |
+| `src/incident_triage_agent/agent/prompts.py` | `SYSTEM_PROMPT` |
+| `src/incident_triage_agent/agent/safety.py` | `looks_like_injection()`, `redact()` |
+| `src/incident_triage_agent/llm/gemini.py` | `GeminiLLM`, `parse_response()`, `retry_delay()` |
+| `src/incident_triage_agent/llm/mock.py` | `MockLLM` rule-based policy |
+| `src/incident_triage_agent/tools/registry.py` | `Tool`, `ToolRegistry`, `validate_args()`, `execute_with_retry()` |
+| `src/incident_triage_agent/tools/infra_tools.py` | tool functions + `build_registry()` |
+| `src/incident_triage_agent/sim/world.py` | `SCENARIOS`, `build_world()` |
 
 ## 2. Data model (SQLite)
 
@@ -371,15 +371,15 @@ See `.env.example`: `GEMINI_API_KEY, GEMINI_MODEL, DB_PATH, MAX_STEPS, MAX_RUN_T
 TOOL_MAX_RETRIES, TOOL_BACKOFF_SECONDS, MIN_CONFIDENCE, PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M`.
 
 ## 11. Tests (what proves what)
-| Test file | Proves |
+| Test file (in `tests/`) | Proves |
 |---|---|
-| `test_tools.py` | schemas, validation, transient retry with exponential backoff, permanent errors not retried |
-| `test_agent_loop.py` | full plan->tools->approval->verify->report; reject path; low-confidence routing; injection cannot bypass gate; memory recall; guidance |
-| `test_resume.py` | restart while waiting approval; crash mid-run resumes from checkpoint; approved action exactly once across crash; pause/resume/cancel |
-| `test_guards_and_recovery.py` | step limit + loop guard; token budget; LLM outage -> failed -> resume; self-correction after bad args; unknown tool; one risky per turn |
-| `test_context.py` | truncation, compaction never drops a step, tag-escape safety |
-| `test_gemini_adapter.py` | Gemini response parsing, declarations, retries, 429 hint (SDK faked - no key needed) |
-| `test_api.py` | every endpoint incl. SSE, 404/409/422, pause really stops, UI page served |
+| `tools/test_tools.py` | schemas, validation, transient retry with exponential backoff, permanent errors not retried |
+| `agent/test_loop.py` | full plan->tools->approval->verify->report; reject path; low-confidence routing; injection cannot bypass gate; memory recall; guidance |
+| `agent/test_resume.py` | restart while waiting approval; crash mid-run resumes from checkpoint; approved action exactly once across crash; pause/resume/cancel |
+| `agent/test_guards_and_recovery.py` | step limit + loop guard; token budget; LLM outage -> failed -> resume; self-correction after bad args; unknown tool; one risky per turn |
+| `agent/test_context.py` | truncation, compaction never drops a step, tag-escape safety |
+| `llm/test_gemini_adapter.py` | Gemini response parsing, declarations, retries, 429 hint (SDK faked - no key needed) |
+| `api/test_api.py` | every endpoint incl. SSE, 404/409/422, pause really stops, UI page served |
 
 ## 12. Framework choices
 The skills used while building this suggest these frameworks. We adopted only what keeps behaviour identical and adds
@@ -398,5 +398,5 @@ LangGraph checkpointer (one checkpoint per super-step); `guards` = recursion lim
 resuming a thread from its last checkpoint.
 
 **Libraries in use:** Python: `fastapi`, `uvicorn`, `pydantic`, `google-genai`, `python-dotenv`; tests: `pytest`, `httpx`.
-Browser: none (plain HTML, CSS and JS in `static/`, no CDN).
+Browser: none (plain HTML, CSS and JS in `frontend/`, no CDN).
 

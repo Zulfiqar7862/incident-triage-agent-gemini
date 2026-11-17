@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.agent.loop import Agent
-from app.agent.runtime import Runtime
-from app.config import Settings
-from app.db import DB
-from app.llm.base import LLMDecision, ToolCall
-from app.llm.mock import MockLLM
-from app.tools.infra_tools import build_registry
+from incident_triage_agent.agent.loop import Agent
+from incident_triage_agent.agent.runtime import Runtime
+from incident_triage_agent.config import Settings
+from incident_triage_agent.db import DB
+from incident_triage_agent.llm.base import LLMDecision, ToolCall
+from incident_triage_agent.llm.mock import MockLLM
+from incident_triage_agent.tools.infra_tools import build_registry
 
 
 def make_settings(db_path: str, **kw) -> Settings:

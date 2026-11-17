@@ -14,12 +14,12 @@ import tempfile
 import time
 from pathlib import Path
 
-from app.agent.loop import Agent
-from app.agent.runtime import Runtime
-from app.config import Settings
-from app.db import DB
-from app.llm import make_llm
-from app.tools.infra_tools import build_registry
+from incident_triage_agent.agent.loop import Agent
+from incident_triage_agent.agent.runtime import Runtime
+from incident_triage_agent.config import Settings
+from incident_triage_agent.db import DB
+from incident_triage_agent.llm import make_llm
+from incident_triage_agent.tools.infra_tools import build_registry
 
 HERE = Path(__file__).parent
 

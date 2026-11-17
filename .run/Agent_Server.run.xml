@@ -9,7 +9,7 @@
     <option name="ADD_CONTENT_ROOTS" value="true" />
     <option name="ADD_SOURCE_ROOTS" value="true" />
     <option name="SCRIPT_NAME" value="uvicorn" />
-    <option name="PARAMETERS" value="app.main:app --port 8000 --reload" />
+    <option name="PARAMETERS" value="incident_triage_agent.api.main:app --port 8000 --reload" />
     <option name="MODULE_MODE" value="true" />
     <option name="EMULATE_TERMINAL" value="false" />
     <method v="2" />

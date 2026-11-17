@@ -30,7 +30,7 @@ its reasoning live, and **does not lose work** if the server restarts.
 ```mermaid
 flowchart LR
     OP[Operator<br/>browser] -- "HTTP JSON + SSE" --> API
-    subgraph Server["FastAPI process (app/main.py)"]
+    subgraph Server["FastAPI process (api/main.py)"]
         API[REST API + SSE<br/>+ static UI]
         RT[Runtime<br/>lifecycle + worker threads]
         AG[Agent.step<br/>thin step loop]
@@ -55,8 +55,8 @@ flowchart LR
 ### Components
 | Component | Responsibility | Key idea |
 |---|---|---|
-| **UI** (`static/`) | Start runs, watch the agent think (Thinking panel) and the trace, review changes on a plain-language approval card, pause/resume/cancel, send guidance; empty, loading and error states | Plain JS, SSE for the trace + 1.5 s polling for run state |
-| **API** (`app/main.py`) | REST endpoints for runtime, tools, state; SSE stream | Thin: validates input, calls Runtime, returns DB state |
+| **UI** (`frontend/`) | Start runs, watch the agent think (Thinking panel) and the trace, review changes on a plain-language approval card, pause/resume/cancel, send guidance; empty, loading and error states | Plain JS, SSE for the trace + 1.5 s polling for run state |
+| **API** (`src/incident_triage_agent/api/main.py`) | REST endpoints for runtime, tools, state; SSE stream | Thin: validates input, calls Runtime, returns DB state |
 | **Runtime** (`agent/runtime.py`) | Lifecycle of runs; one worker thread per active run; `recover()` on startup | Control = conditional status change in DB; worker notices at next step |
 | **Agent** (`agent/loop.py`) | Executes exactly one step and checkpoints; a thin loop over the five parts below | Stateless between steps: always starts from DB |
 | **Planner** (`agent/planner.py`) | Recalls memory, builds the context, asks the model for the next decision | The only place that talks to the model |
@@ -105,7 +105,7 @@ sequenceDiagram
 
 | Decision | Chosen | Alternative | Why / trade-off |
 |---|---|---|---|
-| Orchestration | Own small loop (`app/agent/`: planner, executor, approval gate, guards, state) | LangGraph, Google ADK, Temporal | Fully explainable in a 2-4h timebox. Same concepts (checkpoint per node, interrupt for approval, resume). Would adopt LangGraph/ADK/Temporal for multi-worker production. |
+| Orchestration | Own small loop (`agent/`: planner, executor, approval gate, guards, state) | LangGraph, Google ADK, Temporal | Fully explainable in a 2-4h timebox. Same concepts (checkpoint per node, interrupt for approval, resume). Would adopt LangGraph/ADK/Temporal for multi-worker production. |
 | Conversation state | Rebuild prompt from DB each step | Keep growing chat history in the SDK | Small, deliberate context; resume is trivial; no provider-specific history (e.g. thought signatures). Cost: we re-send the summary every step (cheap at these sizes). |
 | Durability | SQLite checkpoint after every step | Event sourcing, Postgres, Temporal | Zero setup, transactional. Single process only - documented as next step. |
 | Delivery semantics | Read tools at-least-once; approved actions exactly-once | Exactly-once everywhere | Reads are idempotent, so repeating after a crash is harmless. Writes are protected by marking the approval `executed` in the same transaction as the checkpoint (real infra: approval id as idempotency key). |

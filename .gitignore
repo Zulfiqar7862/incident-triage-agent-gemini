@@ -11,3 +11,5 @@ data/
 .idea/workspace.xml
 .idea/
 evals/results/
+*.egg-info/
+build/

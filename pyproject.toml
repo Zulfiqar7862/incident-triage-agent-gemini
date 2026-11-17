@@ -1,0 +1,34 @@
+[project]
+name = "incident-triage-agent"
+version = "0.1.0"
+description = "Autonomous, resumable, human-supervised incident triage agent (FastAPI + Gemini)."
+readme = "README.md"
+requires-python = ">=3.11"   # google-genai needs 3.11+; tested on 3.11-3.13
+dependencies = [
+    "fastapi>=0.110,<1.0",
+    "uvicorn[standard]>=0.29",
+    "google-genai>=1.20,<4.0",
+    "python-dotenv>=1.0",
+    "pydantic>=2.6,<3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27", "ruff>=0.5"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "B", "UP", "I"]

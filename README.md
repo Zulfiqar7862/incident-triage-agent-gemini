@@ -7,10 +7,6 @@ It reads the alert, writes a plan, investigates with tools (metrics, logs, deplo
 in a web console and can approve, reject, pause, resume, cancel, or message the agent. Every step is checkpointed to
 SQLite, so a run **continues after a server restart**.
 
-| Live thinking panel | Approval card | Finished run |
-|---|---|---|
-| ![thinking](docs/screenshots/thinking-expanded.png) | ![approval](docs/screenshots/approval.png) | ![completed](docs/screenshots/completed.png) |
-
 **Stack:** Python 3.11+, FastAPI, SQLite, Google Gemini (`google-genai` SDK, function calling), plain HTML/JS UI (no build step).
 Infrastructure is simulated, so everything runs on a laptop.
 
@@ -20,7 +16,8 @@ Infrastructure is simulated, so everything runs on a laptop.
 - [Using the console](#using-the-console)
 - [Tests and evals](#tests-and-evals)
 - [Design decisions](#design-decisions)
-- [Project layout](#project-layout)
+- [Project structure](#project-structure)
+- [Engineering practices](#engineering-practices)
 - [What's next](#whats-next)
 - [Documentation](#documentation)
 
@@ -41,7 +38,7 @@ Needs Python 3.11+, `git` and `make` (Windows without `make`: see the end of thi
 ```bash
 git clone https://github.com/Zulfiqar7862/incident-triage-agent-gemini.git
 cd incident-triage-agent-gemini
-make install        # creates .venv and installs requirements.txt
+make install        # creates .venv and installs the package (pip install -e ".[dev]")
 make quickstart     # creates .env from .env.example (key empty = demo mode) and serves the app
 ```
 
@@ -84,8 +81,8 @@ for the server's retry hint. Tokens and estimated cost are shown per step and pe
 
 | Mode | When | What decides the next step |
 |---|---|---|
-| Demo (mock) | `GEMINI_API_KEY` empty | A deterministic rule-based policy (`app/llm/mock.py`). Also used by all tests. |
-| Gemini | `GEMINI_API_KEY` set in `.env` | Gemini function calling (`app/llm/gemini.py`). |
+| Demo (mock) | `GEMINI_API_KEY` empty | A deterministic rule-based policy (`src/incident_triage_agent/llm/mock.py`). Also used by all tests. |
+| Gemini | `GEMINI_API_KEY` set in `.env` | Gemini function calling (`src/incident_triage_agent/llm/gemini.py`). |
 
 ### 3. PyCharm
 
@@ -99,9 +96,9 @@ for the server's retry hint. Tokens and estimated cost are shown per step and pe
 ### Windows without `make`
 ```bat
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\pip install -e ".[dev]"
 copy .env.example .env
-.venv\Scripts\uvicorn app.main:app --port 8000
+.venv\Scripts\uvicorn incident_triage_agent.api.main:app --port 8000
 ```
 
 ## Using the console
@@ -146,7 +143,7 @@ now fixed: free-tier rate limits (the client now honours retry hints), a confide
 
 ## Design decisions
 
-- **Own small agent loop, no framework.** Planner, executor, approval gate, guards and typed state in `app/agent/`;
+- **Own small agent loop, no framework.** Planner, executor, approval gate, guards and typed state in `src/incident_triage_agent/agent/`;
   it maps one-to-one onto LangGraph (see [LLD, Framework choices](docs/LLD.md#12-framework-choices)).
 - **The prompt is rebuilt from saved state every step**, within a budget, so resume is trivial.
 - **Checkpoint to SQLite after every step**; an approved change and its checkpoint commit together, so it runs once.
@@ -156,35 +153,33 @@ now fixed: free-tier rate limits (the client now honours retry hints), a confide
 
 Trade-offs and failure modes: [docs/HLD.md](docs/HLD.md). Schema, algorithms and sequences: [docs/LLD.md](docs/LLD.md).
 
-## Project layout
+## Project structure
 
 ```
-app/
-  main.py            FastAPI app: REST + SSE API, serves the console
-  config.py          settings from environment and .env
-  db.py              SQLite: runs (checkpoints), events (trace), approvals, memory
-  agent/
-    runtime.py       lifecycle: start, pause, resume, cancel, approve; worker threads; recover() on startup
-    loop.py          Agent.step(): the thin step loop (model + tools + guards)
-    planner.py       memory recall + context + ask the model for the next decision
-    executor.py      run tool calls: validation, retry/backoff, parallel reads
-    approval.py      approval gate (risky tools) + completed/escalated routing
-    guards.py        step limit, token budget, loop guard
-    state.py         RunState + Checkpointer (save after every step)
-    context.py       prompt layers, truncation, compaction, budget
-    prompts.py       system prompt
-    safety.py        prompt-injection flagging, redaction for memory
-  llm/               base.py (interface), gemini.py, mock.py
-  tools/             registry.py (schemas, validation, retry), infra_tools.py (10 tools)
-  sim/world.py       simulated services and the four scenarios
-static/              index.html, app.js, style.css (operator console)
-runbooks/            markdown runbooks used by search_runbooks
-tests/               pytest suite
-evals/               golden.json, run_evals.py
-scripts/             demo.sh (curl walkthrough), check_python.py
-docs/                HLD.md, LLD.md, API.md, screenshots/
-.run/                PyCharm run configurations
+src/incident_triage_agent/   the Python package (installed editable by make install)
+  api/          FastAPI app: REST + SSE endpoints, serves the console
+  agent/        the agent: runtime (lifecycle, recover), step loop, planner, executor, approval gate, guards, state
+  llm/          model adapters behind one interface: Gemini and the offline mock
+  tools/        tool registry (schemas, validation, retry) and the 10 infrastructure tools
+  sim/          simulated services and the four incident scenarios
+  config.py     settings from environment and .env
+  db.py         SQLite storage: runs (checkpoints), events (trace), approvals, memory
+frontend/       operator console: index.html, app.js, style.css (plain JS, no build step)
+runbooks/       markdown runbooks the agent searches
+tests/          pytest suite, one folder per package area (agent, api, llm, tools)
+evals/          golden scenarios and the scoring harness
+scripts/        demo.sh: a full run through the REST API with curl
+docs/           HLD, LLD, API reference
+.run/           PyCharm run configurations
+.github/        CI workflow
 ```
+
+## Engineering practices
+
+- `pyproject.toml` is the single config: dependencies, src-layout packaging, pytest and ruff settings.
+- `make lint` and `make test` run ruff and pytest; CI (`.github/workflows/ci.yml`) runs the same plus the evals in mock mode, with no secrets.
+- `.pre-commit-config.yaml` runs ruff and basic file checks (including private-key detection) before each commit.
+- `.editorconfig` keeps indentation and line endings consistent across PyCharm and other editors.
 
 ## What's next
 
@@ -201,4 +196,3 @@ docs/                HLD.md, LLD.md, API.md, screenshots/
 - [docs/HLD.md](docs/HLD.md): high-level design
 - [docs/LLD.md](docs/LLD.md): low-level design
 - [docs/API.md](docs/API.md): endpoints with curl examples
-- [AI_LOG.md](AI_LOG.md): how AI tools were used to build this
