@@ -16,7 +16,8 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 const label = (status) => status.replace("_", " ");
 const statusPill = (status) => `<span class="status s-${status}">${label(status)}</span>`;
 const time = (ts) => new Date(ts * 1000).toLocaleTimeString();
-const call = (tool, args) => `<code>${esc(tool)}(${esc(JSON.stringify(args))})</code>`;
+const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 4 });
+const call = (tool, args) => `<code translate="no">${esc(tool)}(${esc(JSON.stringify(args))})</code>`;
 // "top runbooks: ['a', 'b']" -> "top runbooks: a, b"
 const plainList = (text) => String(text).replace(/\[([^\]]*)\]/g, (_, inner) => inner.replace(/['"]/g, ""));
 const humanize = (key) => key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -140,7 +141,7 @@ function renderRun(r) {
   $("st-step").textContent = r.step;
   think.setRun(r);
   $("st-tokens").textContent = (r.tokens_in + r.tokens_out).toLocaleString();
-  $("st-cost").textContent = "$" + r.cost_usd.toFixed(4);
+  $("st-cost").textContent = usd.format(r.cost_usd);
   $("st-llm").textContent = r.llm_mode === "gemini" ? "Gemini" : "Offline mock";
   $("pause").disabled = r.status !== "running";
   $("resume").disabled = !["paused", "failed"].includes(r.status);

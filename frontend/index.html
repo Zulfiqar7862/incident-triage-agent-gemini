@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf9f5">
   <title>Incident Triage Agent</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/style.css">
@@ -56,7 +57,7 @@
           <div><dt>Tokens</dt><dd id="st-tokens">0</dd></div>
           <div><dt>Cost</dt><dd id="st-cost">$0</dd></div>
           <div><dt>Model</dt><dd id="st-llm"></dd></div>
-          <div><dt>Approvals</dt><dd id="st-approvals">None pending</dd></div>
+          <div><dt>Approvals</dt><dd id="st-approvals" aria-live="polite">None pending</dd></div>
         </dl>
         <div class="actions">
           <button id="pause">Pause run</button>
@@ -103,7 +104,7 @@
         <ul id="ap-findings" class="findings"></ul>
 
         <label for="ap-comment">Comment for the agent (optional)</label>
-        <input id="ap-comment" placeholder="For example: approved, but watch the error rate for 10 minutes">
+        <input id="ap-comment" name="comment" autocomplete="off" placeholder="For example: approved, but watch the error rate for 10 minutes…">
         <div class="actions">
           <button id="approve" class="primary">Approve change</button>
           <button id="reject" class="danger">Reject change</button>
@@ -128,10 +129,10 @@
       <section class="panel">
         <h2>Message the agent</h2>
         <div class="composer">
-          <textarea id="guidance" rows="2" aria-label="Message for the agent" aria-describedby="composer-hint"
-                    placeholder="For example: prefer rollback over restart. Read at its next step."></textarea>
+          <textarea id="guidance" name="guidance" autocomplete="off" rows="2" aria-label="Message for the agent" aria-describedby="composer-hint"
+                    placeholder="For example: prefer rollback over restart…"></textarea>
           <div class="composer-row">
-            <span id="composer-hint" class="hint">Enter sends, Shift+Enter adds a line</span>
+            <span id="composer-hint" class="hint">Enter sends, Shift+Enter adds a line. The agent reads it at its next step.</span>
             <button id="send">Send to agent</button>
           </div>
         </div>
@@ -140,7 +141,7 @@
       <section class="panel">
         <div class="section-head">
           <h2>Live trace</h2>
-          <span id="conn" class="conn">Connecting…</span>
+          <span id="conn" class="conn" aria-live="polite">Connecting…</span>
         </div>
         <p class="hint">Every step the agent takes: what it thought, which tools it called, and what came back.</p>
         <p id="trace-empty" class="state">Waiting for the first event…</p>
