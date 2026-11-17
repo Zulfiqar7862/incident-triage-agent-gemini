@@ -18,6 +18,10 @@ make quickstart    # creates .env from .env.example (if missing) and starts http
 ```
 Put your key in `.env` (`GEMINI_API_KEY=...`) to use Gemini; leave it empty for offline mock mode.
 
+| Waiting for approval | Completed |
+|---|---|
+| ![approval](docs/screenshots/approval.png) | ![done](docs/screenshots/completed.png) |
+
 ---
 
 ## 1. Why incident triage? (use-case rationale)
