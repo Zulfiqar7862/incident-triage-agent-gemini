@@ -59,7 +59,7 @@
   --r-pill: 999px;
 
   --hit: 44px;               /* minimum hit area */
-  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);   /* strong ease-out (emil-design-eng) */
 }
 
 
@@ -124,7 +124,7 @@ button {
 }
 button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 button.danger { color: var(--red); border-color: var(--red-line); }
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {   /* no sticky hover on touch */
   button:hover:not(:disabled) { background: var(--inset); border-color: var(--muted); }
   button.primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); }
   button.danger:hover:not(:disabled) { background: var(--red-bg); border-color: var(--red); }
@@ -136,9 +136,9 @@ button[aria-busy="true"]::before { content: ""; display: inline-block; width: 10
   border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -1px; }
 :focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 @media (prefers-reduced-motion: no-preference) {
-  button { transition-property: scale, background-color, border-color; transition-duration: 150ms;
-    transition-timing-function: ease-out; }
-  button:active:not(:disabled) { scale: 0.96; }
+  button { transition-property: scale, background-color, border-color; transition-duration: 160ms;
+    transition-timing-function: var(--ease-out); }
+  button:active:not(:disabled) { scale: 0.97; }   /* press feedback, subtle */
   button[aria-busy="true"]::before { animation: spin 0.8s linear infinite; }
 }
 .actions { display: flex; gap: var(--s-2); flex-wrap: wrap; margin-top: var(--s-4); }
@@ -308,6 +308,10 @@ select:disabled { color: var(--faint); }
 
 @media (prefers-reduced-motion: no-preference) {
   .thinking.live .th-dot { animation: pulse 1.4s ease-in-out infinite; }
+  /* the approval card and its receipt appear occasionally: a short fade-up so they don't pop in */
+  .decision, .receipt { transition-property: opacity, translate; transition-duration: 200ms;
+    transition-timing-function: var(--ease-out); }
+  @starting-style { .decision, .receipt { opacity: 0; translate: 0 6px; } }
 }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
 @keyframes spin { to { rotate: 360deg; } }
