@@ -84,7 +84,18 @@ def _row(r: sqlite3.Row | None) -> dict | None:
     return d
 
 
+def _first(rows: list[sqlite3.Row]) -> dict | None:
+    return _row(rows[0]) if rows else None
+
+
+def _marks(values: list) -> str:
+    """'?,?,?' placeholders for an IN (...) clause."""
+    return ",".join("?" * len(values))
+
+
 class DB:
+    """Thread-safe SQLite access. One connection behind a lock; writes run in short transactions."""
+
     def __init__(self, path: str):
         self.path = path
         if path != ":memory:":
@@ -128,7 +139,7 @@ class DB:
 
     def get_run(self, run_id: str) -> dict | None:
         rows = self._q("SELECT * FROM runs WHERE id=?", (run_id,))
-        return _row(rows[0]) if rows else None
+        return _first(rows)
 
     def list_runs(self, limit: int = 50) -> list[dict]:
         rows = self._q("SELECT id, scenario, title, status, step, tokens_in, tokens_out, cost_usd, llm_mode,"
@@ -137,7 +148,7 @@ class DB:
 
     def runs_with_status(self, statuses: Iterable[str]) -> list[str]:
         st = list(statuses)
-        rows = self._q(f"SELECT id FROM runs WHERE status IN ({','.join('?' * len(st))})", st)
+        rows = self._q(f"SELECT id FROM runs WHERE status IN ({_marks(st)})", st)
         return [r["id"] for r in rows]
 
     def save_checkpoint(self, run_id: str, *, state: dict, plan: list, step: int, tokens_in: int,
@@ -167,7 +178,7 @@ class DB:
         params.append(run_id)
         if expected is not None:
             exp = list(expected)
-            sql += f" AND status IN ({','.join('?' * len(exp))})"
+            sql += f" AND status IN ({_marks(exp)})"
             params.extend(exp)
         with self.tx() as c:
             return c.execute(sql, params).rowcount == 1
@@ -194,12 +205,12 @@ class DB:
 
     def get_approval(self, approval_id: str) -> dict | None:
         rows = self._q("SELECT * FROM approvals WHERE id=?", (approval_id,))
-        return _row(rows[0]) if rows else None
+        return _first(rows)
 
     def pending_approval(self, run_id: str) -> dict | None:
         rows = self._q("SELECT * FROM approvals WHERE run_id=? AND status='pending' ORDER BY created_at DESC"
                        " LIMIT 1", (run_id,))
-        return _row(rows[0]) if rows else None
+        return _first(rows)
 
     def list_approvals(self, run_id: str) -> list[dict]:
         return [_row(r) for r in self._q("SELECT * FROM approvals WHERE run_id=? ORDER BY created_at",
@@ -221,7 +232,7 @@ class DB:
         if not svcs:
             return []
         cutoff = time.time() - max_age_days * 86400  # staleness: old memories are ignored
-        rows = self._q(f"SELECT * FROM memory WHERE service IN ({','.join('?' * len(svcs))}) AND created_at>?"
+        rows = self._q(f"SELECT * FROM memory WHERE service IN ({_marks(svcs)}) AND created_at>?"
                        " ORDER BY created_at DESC LIMIT ?", (*svcs, cutoff, limit))
         return [dict(r) for r in rows]
 

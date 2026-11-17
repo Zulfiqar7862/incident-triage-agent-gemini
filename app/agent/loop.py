@@ -25,7 +25,7 @@ from app.agent.safety import redact
 from app.agent.state import Checkpointer, RunState, cost_usd
 from app.config import Settings
 from app.db import DB
-from app.llm.base import LLM, LLMError, ToolCall
+from app.llm.base import LLM, LLMDecision, LLMError, ToolCall
 from app.tools.registry import ToolRegistry
 
 CONTINUE, STOP = "continue", "stop"
@@ -111,31 +111,15 @@ class Agent:
             return self._finish(rs, stop_report)
 
         # 2) plan: build context and ask the model
-        guidance = self._guidance(run_id)
         try:
-            decision, layers, memories = self.planner.next_decision(rs, guidance)
+            decision, layers, memories = self.planner.next_decision(rs, self._guidance(run_id))
         except LLMError as e:
             self._event(run_id, rs.step, "error", message=str(e))
             self.db.set_status(run_id, "failed", ("running",), error=str(e))
             return STOP
-        rs.step += 1
-        n = rs.step
-        rs.tokens_in += decision.tokens_in
-        rs.tokens_out += decision.tokens_out
-        self._event(run_id, n, "llm_call", model=decision.model, tokens_in=decision.tokens_in,
-                    tokens_out=decision.tokens_out, latency_ms=decision.latency_ms,
-                    cost_usd=round(cost_usd(self.s, decision.tokens_in, decision.tokens_out), 6),
-                    context_layers=layers, memories_used=len(memories))
-        if not decision.thought:  # some models skip the text part; still tell the operator what is happening
-            decision.thought = "(no reasoning text from model) calling " + ", ".join(c.name for c in decision.calls)
-        self._event(run_id, n, "thought", text=decision.thought)
-        if guards.near_token_budget(rs, self.s):
-            self._event(run_id, n, "warning", message="Over 80% of the run token budget used.")
-
-        step_rec: dict = {"n": n, "thought": decision.thought, "calls": []}
-        rs.state.setdefault("steps", []).append(step_rec)
+        step_rec = self._record_decision(rs, decision, layers, memories)
         if not decision.calls:
-            rs.state.setdefault("notes", []).append(f"Step {n}: you replied without a tool call. "
+            rs.state.setdefault("notes", []).append(f"Step {rs.step}: you replied without a tool call. "
                                                     "Always call a tool or finish_triage.")
             self.checkpoints.save(rs)
             return CONTINUE
@@ -143,62 +127,98 @@ class Agent:
         # 3) dispatch
         reads, risky = [], []
         for call in decision.calls:
-            tool = self.registry.get(call.name)
             if call.name == "finish_triage":
                 step_rec["calls"].append({"tool": call.name, "args": call.args, "ok": True,
                                           "summary": "finished", "attempts": 1, "latency_ms": 0})
                 return self._finish(rs, call.args)
-            if call.name == "update_plan":
-                kind = "plan_revised" if rs.plan else "plan"
-                rs.plan = [str(x) for x in (call.args.get("steps") or [])][:MAX_PLAN_ITEMS]
-                step_rec["calls"].append({"tool": call.name, "args": call.args, "ok": True,
-                                          "summary": f"plan with {len(rs.plan)} steps", "attempts": 1,
-                                          "latency_ms": 0})
-                self._event(run_id, n, kind, steps=rs.plan)
-            elif tool is None:
-                step_rec["calls"].append({"tool": call.name, "args": call.args, "ok": False, "attempts": 0,
-                                          "latency_ms": 0, "error": f"unknown tool '{call.name}'. "
-                                          f"Available: {sorted(self.registry.tools)}",
-                                          "summary": f"unknown tool {call.name}"})
-                self._event(run_id, n, "warning", message=f"Model called unknown tool {call.name}")
-            elif tool.risky:
-                risky.append(call)
-            elif guards.is_repeated(rs.state["steps"], call):
-                step_rec["calls"].append({"tool": call.name, "args": call.args, "ok": False, "attempts": 0,
-                                          "latency_ms": 0, "summary": "blocked repeated call",
-                                          "error": "loop guard: identical call already made twice; "
-                                                   "use the earlier result or try something else"})
-                self._event(run_id, n, "warning", message=f"Loop guard blocked repeated {call.name}")
-            else:
+            kind = self._classify(rs, step_rec, call)
+            if kind == "read":
                 reads.append(call)
+            elif kind == "risky":
+                risky.append(call)
+        self._run_reads(rs, step_rec, reads)
+        if risky:
+            return self._request_approval(rs, step_rec, risky, decision.thought)
 
+        # 4) checkpoint
+        self.checkpoints.save(rs)
+        return CONTINUE
+
+    # ------------------------------------------------------------------ step parts
+    def _record_decision(self, rs: RunState, decision: LLMDecision, layers: dict, memories: list) -> dict:
+        """Count the model call, emit llm_call + thought events, and open a new step record."""
+        rs.step += 1
+        n = rs.step
+        rs.tokens_in += decision.tokens_in
+        rs.tokens_out += decision.tokens_out
+        self._event(rs.run_id, n, "llm_call", model=decision.model, tokens_in=decision.tokens_in,
+                    tokens_out=decision.tokens_out, latency_ms=decision.latency_ms,
+                    cost_usd=round(cost_usd(self.s, decision.tokens_in, decision.tokens_out), 6),
+                    context_layers=layers, memories_used=len(memories))
+        if not decision.thought:  # some models skip the text part; still tell the operator what is happening
+            decision.thought = "(no reasoning text from model) calling " + ", ".join(c.name for c in decision.calls)
+        self._event(rs.run_id, n, "thought", text=decision.thought)
+        if guards.near_token_budget(rs, self.s):
+            self._event(rs.run_id, n, "warning", message="Over 80% of the run token budget used.")
+        step_rec: dict = {"n": n, "thought": decision.thought, "calls": []}
+        rs.state.setdefault("steps", []).append(step_rec)
+        return step_rec
+
+    def _classify(self, rs: RunState, step_rec: dict, call: ToolCall) -> str:
+        """Handle control tools and refusals inline; return 'read', 'risky' or 'done'."""
+        tool = self.registry.get(call.name)
+        if call.name == "update_plan":
+            kind = "plan_revised" if rs.plan else "plan"
+            rs.plan = [str(x) for x in (call.args.get("steps") or [])][:MAX_PLAN_ITEMS]
+            step_rec["calls"].append({"tool": call.name, "args": call.args, "ok": True,
+                                      "summary": f"plan with {len(rs.plan)} steps", "attempts": 1, "latency_ms": 0})
+            self._event(rs.run_id, rs.step, kind, steps=rs.plan)
+            return "done"
+        if tool is None:
+            step_rec["calls"].append({"tool": call.name, "args": call.args, "ok": False, "attempts": 0,
+                                      "latency_ms": 0, "error": f"unknown tool '{call.name}'. "
+                                      f"Available: {sorted(self.registry.tools)}",
+                                      "summary": f"unknown tool {call.name}"})
+            self._event(rs.run_id, rs.step, "warning", message=f"Model called unknown tool {call.name}")
+            return "done"
+        if tool.risky:
+            return "risky"
+        if guards.is_repeated(rs.state["steps"], call):
+            step_rec["calls"].append({"tool": call.name, "args": call.args, "ok": False, "attempts": 0,
+                                      "latency_ms": 0, "summary": "blocked repeated call",
+                                      "error": "loop guard: identical call already made twice; "
+                                               "use the earlier result or try something else"})
+            self._event(rs.run_id, rs.step, "warning", message=f"Loop guard blocked repeated {call.name}")
+            return "done"
+        return "read"
+
+    def _run_reads(self, rs: RunState, step_rec: dict, reads: list[ToolCall]) -> None:
+        """Run read-only calls in parallel and record each result with its events."""
+        n = rs.step
         for call in reads:
-            self._event(run_id, n, "tool_call", tool=call.name, args=call.args, risky=False)
+            self._event(rs.run_id, n, "tool_call", tool=call.name, args=call.args, risky=False)
         for rec in self.executor.run_parallel(rs.state["world"], reads):
             step_rec["calls"].append(rec)
             self._tool_result_event(rs, rec, risky=False,
                                     output=json.dumps(rec.get("data"), default=str)[:2000] if rec["ok"] else None)
             if rec.get("attempts", 1) > 1:
-                self._event(run_id, n, "retry", tool=rec["tool"], attempts=rec["attempts"], ok=rec["ok"])
+                self._event(rs.run_id, n, "retry", tool=rec["tool"], attempts=rec["attempts"], ok=rec["ok"])
             if rec.get("flagged"):
-                self._event(run_id, n, "warning", message=f"Possible prompt injection in {rec['tool']} output. "
+                self._event(rs.run_id, n, "warning", message=f"Possible prompt injection in {rec['tool']} output. "
                             "It is passed to the model as untrusted data and cannot bypass the approval gate.")
 
+    def _request_approval(self, rs: RunState, step_rec: dict, risky: list[ToolCall], thought: str) -> str:
+        """Human-in-the-loop gate (enforced in code, not prompt): one risky action per turn, then wait."""
         for extra in risky[1:]:
             step_rec["calls"].append({"tool": extra.name, "args": extra.args, "ok": False, "attempts": 0,
                                       "latency_ms": 0, "risky": True, "summary": "not run",
                                       "error": "only one risky action per turn; propose it again later if needed"})
-        if risky:  # human-in-the-loop gate (enforced in code, not prompt)
-            call = risky[0]
-            appr = self.gate.request(rs, call, decision.thought or "")
-            step_rec["calls"].append({"tool": call.name, "args": call.args, "risky": True, "ok": None,
-                                      "awaiting_approval": True, "summary": "waiting for human approval"})
-            self.checkpoints.save(rs)
-            self._event(run_id, n, "approval_requested", approval_id=appr["id"], tool=call.name, args=call.args,
-                        reason=decision.thought)
-            self.db.set_status(run_id, "waiting_approval", ("running",))
-            return STOP
-
-        # 4) checkpoint
+        call = risky[0]
+        appr = self.gate.request(rs, call, thought or "")
+        step_rec["calls"].append({"tool": call.name, "args": call.args, "risky": True, "ok": None,
+                                  "awaiting_approval": True, "summary": "waiting for human approval"})
         self.checkpoints.save(rs)
-        return CONTINUE
+        self._event(rs.run_id, rs.step, "approval_requested", approval_id=appr["id"], tool=call.name, args=call.args,
+                    reason=thought)
+        self.db.set_status(rs.run_id, "waiting_approval", ("running",))
+        return STOP

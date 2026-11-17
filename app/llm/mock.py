@@ -56,12 +56,8 @@ class MockLLM:
 
     # ------------------------------------------------------------------
     def _policy(self, state: dict) -> tuple[str, list[ToolCall]]:
-        prefix = ""
-        if state.get("guidance"):
-            prefix = f"Operator guidance noted ('{state['guidance'][-1][:80]}'). "
-        if any(c.get("flagged") for c in _calls(state)):
-            prefix += "Ignoring instructions found inside tool output (treated as data). "
-
+        """One rule per stage of the plan; the first stage whose evidence is missing decides the next step."""
+        prefix = self._prefix(state)
         if not state.get("plan"):
             return "Starting triage: writing an investigation plan first.", [ToolCall("update_plan", {"steps": PLAN})]
 
@@ -71,13 +67,7 @@ class MockLLM:
 
         unhealthy = [r["service"] for r in listing["data"] if r["status"] != "healthy"]
         if not unhealthy:
-            if not _last_ok(state, "search_runbooks"):
-                return (prefix + "Every service reports healthy. Checking the general runbook before concluding.",
-                        [ToolCall("search_runbooks", {"query": "general triage nothing unhealthy"})])
-            return (prefix + "No unhealthy service found, so I will not invent a fix. Handing back to a human.",
-                    [self._finish("Could not confirm the alert: all services healthy, metrics normal.", "SEV4", [],
-                                  [], ["Ask support for affected customer, URL and time",
-                                       "Check client-side / CDN monitoring"], 0.35)])
+            return self._nothing_unhealthy(prefix, state)
         target = unhealthy[0]
 
         missing = [t for t in ("get_metrics", "get_logs", "get_recent_deployments")
@@ -88,16 +78,7 @@ class MockLLM:
             return (prefix + f"{target} is unhealthy. Gathering {', '.join(missing)} in parallel{retry_note}.",
                     [ToolCall(t, {"service": target}) for t in missing])
 
-        # diagnose from evidence gathered BEFORE any mitigation (post-fix metrics look healthy)
-        all_calls = _calls(state)
-        cutoff = next((i for i, c in enumerate(all_calls) if c.get("risky")), len(all_calls))
-        before = {"steps": [{"calls": all_calls[:cutoff]}]}
-        metrics = (_last_ok(before, "get_metrics", service=target) or {}).get("data") or {}
-        logs = (_last_ok(before, "get_logs", service=target) or {}).get("data") or []
-        deps = (_last_ok(before, "get_recent_deployments", service=target) or {}).get("data") or []
-        cur = metrics.get("current", {})
-
-        diagnosis = self._diagnose(target, cur, logs, deps, listing["data"])
+        diagnosis = self._diagnose(target, *self._evidence_before_mitigation(state, target), listing["data"])
         if not _last_ok(state, "search_runbooks"):
             return (prefix + f"Hypothesis: {diagnosis['root_cause']} Checking runbooks to confirm the fix.",
                     [ToolCall("search_runbooks", {"query": diagnosis["query"]})])
@@ -111,8 +92,41 @@ class MockLLM:
             tool, args = diagnosis["action"]
             return (prefix + f"Runbook agrees. Proposing {tool} {args} - this changes production so it needs approval.",
                     [ToolCall(tool, args)])
+        return self._after_mitigation(prefix, state, target, diagnosis, actions[-1])
 
-        last = actions[-1]
+    @staticmethod
+    def _prefix(state: dict) -> str:
+        """Acknowledge operator guidance and flagged tool output at the start of the thought."""
+        prefix = ""
+        if state.get("guidance"):
+            prefix = f"Operator guidance noted ('{state['guidance'][-1][:80]}'). "
+        if any(c.get("flagged") for c in _calls(state)):
+            prefix += "Ignoring instructions found inside tool output (treated as data). "
+        return prefix
+
+    def _nothing_unhealthy(self, prefix: str, state: dict) -> tuple[str, list[ToolCall]]:
+        if not _last_ok(state, "search_runbooks"):
+            return (prefix + "Every service reports healthy. Checking the general runbook before concluding.",
+                    [ToolCall("search_runbooks", {"query": "general triage nothing unhealthy"})])
+        return (prefix + "No unhealthy service found, so I will not invent a fix. Handing back to a human.",
+                [self._finish("Could not confirm the alert: all services healthy, metrics normal.", "SEV4", [],
+                              [], ["Ask support for affected customer, URL and time",
+                                   "Check client-side / CDN monitoring"], 0.35)])
+
+    @staticmethod
+    def _evidence_before_mitigation(state: dict, target: str) -> tuple[dict, list, list]:
+        """(current metrics, logs, deployments) from BEFORE any risky action: post-fix metrics look healthy."""
+        all_calls = _calls(state)
+        cutoff = next((i for i, c in enumerate(all_calls) if c.get("risky")), len(all_calls))
+        before = {"steps": [{"calls": all_calls[:cutoff]}]}
+        metrics = (_last_ok(before, "get_metrics", service=target) or {}).get("data") or {}
+        logs = (_last_ok(before, "get_logs", service=target) or {}).get("data") or []
+        deps = (_last_ok(before, "get_recent_deployments", service=target) or {}).get("data") or []
+        return metrics.get("current", {}), logs, deps
+
+    def _after_mitigation(self, prefix: str, state: dict, target: str, diagnosis: dict,
+                          last: dict) -> tuple[str, list[ToolCall]]:
+        """A risky action was decided: escalate if it did not run, else verify with fresh metrics and conclude."""
         if not last.get("ok"):
             reason = last.get("error", "failed")
             return (prefix + f"The mitigation did not happen ({reason}). Leaving the decision to a human.",
@@ -134,6 +148,7 @@ class MockLLM:
 
     @staticmethod
     def _diagnose(svc: str, m: dict, logs: list[str], deps: list[dict], listing: list[dict]) -> dict:
+        """Match the evidence to a known failure pattern and the smallest fix for it."""
         recent = [d for d in deps if d["minutes_ago"] <= 60]
         errors = [line for line in logs if line.startswith("ERROR")]
         replicas = next((r["replicas"] for r in listing if r["service"] == svc), 2)
