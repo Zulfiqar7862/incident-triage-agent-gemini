@@ -16,10 +16,37 @@ classDiagram
       -_drive(run_id)
     }
     class Agent {
+      +llm; +registry
       +step(run_id) "continue|stop"
-      -_run_tool(world, call)
-      -_finish(...)
-      -_checkpoint(...)
+      -_resume_gated_action(rs)
+      -_finish(rs, report_args)
+    }
+    class RunState {
+      run; state; plan; step; tokens_in; tokens_out
+      +load(run)$
+    }
+    class Checkpointer {
+      +save(rs, executed_approval)
+    }
+    class Planner {
+      +services_in_scope(rs)
+      +next_decision(rs, guidance) decision, layers, memories
+    }
+    class Executor {
+      +run(world, call) record
+      +run_parallel(world, calls) records
+    }
+    class ApprovalGate {
+      +request(rs, call, reason)
+      +decision(rs) status, approval
+      +rejected_record(rs, status, approval)
+      +close(rs, record)
+    }
+    class guards {
+      <<module>>
+      +limit_reached(rs, settings)
+      +near_token_budget(rs, settings)
+      +is_repeated(steps, call)
     }
     class LLM {
       <<interface>>
@@ -44,9 +71,16 @@ classDiagram
     }
     Runtime --> Agent
     Runtime --> DB
-    Agent --> LLM
-    Agent --> ToolRegistry
-    Agent --> DB
+    Agent --> Planner
+    Agent --> Executor
+    Agent --> ApprovalGate
+    Agent --> Checkpointer
+    Agent ..> guards
+    Agent ..> RunState
+    Planner --> LLM
+    Executor --> ToolRegistry
+    ApprovalGate --> DB
+    Checkpointer --> DB
     LLM <|.. GeminiLLM
     LLM <|.. MockLLM
     ToolRegistry o-- Tool
@@ -56,9 +90,15 @@ classDiagram
 |---|---|
 | `app/config.py` | `Settings` dataclass (env + `.env` via python-dotenv). `llm_mode` = gemini if key else mock |
 | `app/db.py` | `DB` class, schema, conditional status updates, transactions |
-| `app/agent/loop.py` | `Agent.step()` - the heart |
-| `app/agent/runtime.py` | `Runtime` - lifecycle + threads + recovery |
+| `app/agent/runtime.py` | `Runtime` - lifecycle (start, pause, resume, cancel, decide, guidance), worker threads, `recover()` |
+| `app/agent/loop.py` | `Agent.step()` - the thin step loop that calls the modules below |
+| `app/agent/state.py` | `RunState` (typed view of a `runs` row), `Checkpointer.save()`, `cost_usd()` |
+| `app/agent/planner.py` | `Planner.next_decision()` - memory recall + `build_context()` + `llm.decide()` |
+| `app/agent/executor.py` | `Executor.run()` / `run_parallel()` - registry, validation, retry/backoff, injection flag |
+| `app/agent/approval.py` | `ApprovalGate` (pending approval, rejected-action record) and `route()` (completed vs escalated) |
+| `app/agent/guards.py` | `limit_reached()`, `near_token_budget()`, `is_repeated()` (loop guard) |
 | `app/agent/context.py` | `build_context()` -> `(prompt, layer_stats)` |
+| `app/agent/prompts.py` | `SYSTEM_PROMPT` |
 | `app/agent/safety.py` | `looks_like_injection()`, `redact()` |
 | `app/llm/gemini.py` | `GeminiLLM`, `parse_response()`, `retry_delay()` |
 | `app/llm/mock.py` | `MockLLM` rule-based policy |
@@ -171,34 +211,35 @@ mid-step -> status becomes `paused`; the worker's checkpoint does not touch `sta
 `set_status('waiting_approval', expected=('running',))` is a no-op; the worker then sees `paused` and exits.
 
 ## 4. `Agent.step(run_id)` algorithm
+The agent is *model + tools + guards*, in the spirit of LangChain's agent/middleware structure but with no framework
+dependency. Each line below names the module that does the work.
 ```
-load run; if status != running: return STOP
-if state.pending:                                   # (0) resume after a human decision
-    approval = db.get_approval(...)
+rs = RunState.load(db.get_run(id)); if status != running: return STOP
+if rs.state.pending:                                     # (0) approval.py + executor.py
+    status = gate.decision(rs)
     pending      -> set waiting_approval; STOP
-    approved     -> run tool (retry), checkpoint + mark approval 'executed' IN ONE TRANSACTION
-    rejected/cancelled -> add observation + note "operator rejected: <comment>"
-    clear pending; CONTINUE
-if step >= MAX_STEPS or tokens >= MAX_RUN_TOKENS:   # (1) guards
+    approved     -> executor.run(tool); checkpoint + mark approval 'executed' IN ONE TRANSACTION
+    rejected/cancelled -> gate.rejected_record(): observation + note "operator rejected: <comment>"
+    gate.close(rs, record); CONTINUE
+if guards.limit_reached(rs):                             # (1) guards.py: step limit, token budget
     finish(confidence=0) -> escalated
-guidance = events of type guidance                  # (2) context
-memories = search_memory(services in alert + unhealthy services seen)
-prompt, layer_stats = build_context(...)
-decision = llm.decide(SYSTEM_PROMPT, prompt, tool_schemas, state)   # (3) model
+decision = planner.next_decision(rs, guidance)           # (2) planner.py
+    = search_memory(services in scope) + build_context() + llm.decide()
     LLMError -> status failed (resumable); STOP
-step += 1; add tokens/cost; events llm_call + thought
+step += 1; add tokens/cost; events llm_call + thought; warning if guards.near_token_budget()
 if no tool calls: note "always call a tool"; checkpoint; CONTINUE
-for call in decision.calls:                          # (4) dispatch
-    finish_triage -> report; completed (fix applied AND confidence>=0.6) else escalated; promote memory if completed; STOP
+for call in decision.calls:                              # (3) dispatch
+    finish_triage -> report; approval.route(): completed (fix applied AND confidence>=0.6) else escalated;
+                     promote memory if completed; STOP
     update_plan   -> replace plan; event plan|plan_revised
     unknown tool  -> error observation
     risky         -> collect
-    3rd identical successful call -> loop-guard error observation
+    guards.is_repeated (3rd identical successful call) -> loop-guard error observation
     else          -> read list
-run read list in ThreadPoolExecutor (max 4) -> observations, flag injections, events
+executor.run_parallel(read list)  (max 4 threads) -> observations, flag injections, events
 risky[1:] -> "one risky action per turn" error
-risky[0]  -> create approval, state.pending, checkpoint, status waiting_approval; STOP
-checkpoint; CONTINUE                                 # (5)
+risky[0]  -> gate.request(): approval row + state.pending; checkpoint; status waiting_approval; STOP
+checkpointer.save(rs); CONTINUE                          # (4) state.py
 ```
 
 ## 5. Runtime worker

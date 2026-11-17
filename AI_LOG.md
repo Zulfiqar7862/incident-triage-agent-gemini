@@ -19,7 +19,10 @@ what to include and how to export it. Replace the placeholder section with the r
 | Live testing | Ran eval against Gemini | Found free-tier 429 (15 RPM) -> added retry-hint handling (commit "honour Gemini 429 retry hints") |
 | Live testing (2) | Fresh-clone run with Gemini | Gemini chose to roll back the release that added the leaky cache (a valid fix the sim did not model) -> sim + golden set now accept restart OR rollback |
 | UI polish | Anthropic's `frontend-design` skill (github.com/anthropics/skills) guided the UI pass: plan tokens first, one loud element, sentence-case action labels, structure that carries meaning | Kept it a quiet operator console; only the approval panel is loud; no behavior or API changes; verified in headless Chrome |
-| Docs | Drafted HLD/LLD/README | Edited for plain language |
+| Thinking panel + calm restyle | Same skill, plus a "calm, minimal, spacious" brief: warm neutral palette, one muted accent, serif headings, 1px dividers; a collapsible Thinking panel built from the existing event stream | No backend change; panel collapses to "Thought for Ns" when the run waits or ends |
+| UI polish (2) | Skills from ui-skills.com: `interface-design` (github.com/Dammyjay93/interface-design) for console craft and consistency, `better-ui` (github.com/jakubkrehel/skills, skills/better-ui) for borders, press states, hover and motion; the site's quick rules (tabular-nums, text-wrap balance/pretty, 44x44px hit areas) | Applied as CSS only; verified in headless Chrome |
+| Refactor | Split `Agent.step` into planner, executor, approval gate, guards and state modules (LangChain-style "model + tools + middleware" structure, no framework dependency) | Zero behavior change: 35/35 tests pass and the full event trace of 8 mock runs is byte-identical before and after |
+| Docs | Drafted HLD/LLD/API/README | Verified every claim against the code; edited for plain language |
 
 ## Transcript
 _Paste or link the exported transcript here._

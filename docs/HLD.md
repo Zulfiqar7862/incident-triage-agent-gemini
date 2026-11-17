@@ -9,14 +9,14 @@ its reasoning live, and **does not lose work** if the server restarts.
 ### Functional requirements
 | # | Requirement | Where |
 |---|---|---|
-| F1 | Plan, then act step by step with tools; revise the plan when evidence changes | `agent/loop.py`, `update_plan` tool |
+| F1 | Plan, then act step by step with tools; revise the plan when evidence changes | `agent/loop.py`, `agent/planner.py`, `update_plan` tool |
 | F2 | Recover from tool errors (retry transient, self-correct on permanent) | `tools/registry.py`, loop notes |
-| F3 | Human approval for every mutating action; approve/reject with comment | approval gate in `loop.py`, `/approval` API, UI card |
+| F3 | Human approval for every mutating action; approve/reject with comment | `agent/approval.py`, `/approval` API, UI card |
 | F4 | Start / pause / resume / cancel runs | `agent/runtime.py` |
 | F5 | Resume after process restart from the last checkpoint | `db.save_checkpoint`, `Runtime.recover()` |
 | F6 | Operator sees plan, thoughts, tool calls, results, tokens, cost, latency live | events table + SSE + UI |
 | F7 | Operator can send guidance mid-run | `/guidance` API, context layer |
-| F8 | Structured final report + routing to a human when confidence < 0.6 or nothing was mitigated | `finish_triage`, `Agent._finish` |
+| F8 | Structured final report + routing to a human when confidence < 0.6 or nothing was mitigated | `finish_triage`, `approval.route()` |
 | F9 | Long-term memory of past incidents | `memory` table |
 
 ### Non-functional requirements
@@ -33,14 +33,18 @@ flowchart LR
     subgraph Server["FastAPI process (app/main.py)"]
         API[REST API + SSE<br/>+ static UI]
         RT[Runtime<br/>lifecycle + worker threads]
-        AG[Agent.step<br/>plan -> act loop]
+        AG[Agent.step<br/>thin step loop]
+        PL[Planner<br/>memory + context + model]
+        EX[Executor<br/>tools, retry, parallel reads]
+        GT[Approval gate + guards<br/>risk policy, routing, limits]
         CTX[Context builder<br/>budget + compaction]
-        TR[Tool registry<br/>schemas, validation, retry]
+        TR[Tool registry<br/>schemas, validation]
         LLM[LLM adapter<br/>Gemini or Mock]
         API --> RT --> AG
-        AG --> CTX
-        AG --> LLM
-        AG --> TR
+        AG --> PL --> CTX
+        PL --> LLM
+        AG --> EX --> TR
+        AG --> GT
     end
     LLM -- "function calling" --> GEM[(Google Gemini API)]
     TR --> SIM[Simulated infra<br/>services, metrics, logs,<br/>deploys, runbooks]
@@ -51,10 +55,15 @@ flowchart LR
 ### Components
 | Component | Responsibility | Key idea |
 |---|---|---|
-| **UI** (`static/`) | Start runs, watch trace, approve/reject, pause/resume/cancel, send guidance | Plain JS, SSE for the trace + 1.5 s polling for run state |
+| **UI** (`static/`) | Start runs, watch the agent think (collapsible Thinking panel) and the trace, approve/reject, pause/resume/cancel, send guidance | Plain JS, SSE for the trace + 1.5 s polling for run state |
 | **API** (`app/main.py`) | REST endpoints for runtime, tools, state; SSE stream | Thin: validates input, calls Runtime, returns DB state |
 | **Runtime** (`agent/runtime.py`) | Lifecycle of runs; one worker thread per active run; `recover()` on startup | Control = conditional status change in DB; worker notices at next step |
-| **Agent** (`agent/loop.py`) | Executes exactly one step and checkpoints | Stateless between steps: always starts from DB |
+| **Agent** (`agent/loop.py`) | Executes exactly one step and checkpoints; a thin loop over the five parts below | Stateless between steps: always starts from DB |
+| **Planner** (`agent/planner.py`) | Recalls memory, builds the context, asks the model for the next decision | The only place that talks to the model |
+| **Executor** (`agent/executor.py`) | Runs tool calls: schema validation, retry with backoff, parallel reads, injection flag | The only place that runs tools |
+| **Approval gate** (`agent/approval.py`) | Turns a risky call into a pending approval; routes a finished run to `completed` or a human | Enforced in code, not in the prompt |
+| **Guards** (`agent/guards.py`) | Step limit, token budget, loop guard | Hard limits the model cannot override |
+| **State** (`agent/state.py`) | `RunState` and `Checkpointer` | One write per step = durable execution |
 | **Context builder** (`agent/context.py`) | Builds the prompt from state in layers within a budget | Truncation + compaction, nothing silently dropped |
 | **LLM adapters** (`llm/`) | `decide(context) -> thought + tool calls + usage` | Gemini (function calling) or deterministic mock |
 | **Tool registry** (`tools/`) | JSON-schema tools, validation, retry/backoff, risky flag | Errors become observations, never crashes |

@@ -1,153 +1,205 @@
 # Incident Triage Agent
 
-A small **governed operator control plane** for incident triage: an AI agent that **triages production incidents on its own** - it plans, calls tools, recovers
-from errors, and **stops for human approval before touching production**. An operator watches every
-thought and tool call live in a web UI and can approve, reject, pause, resume, cancel or give guidance.
-Every step is checkpointed to SQLite, so a run **survives a server restart** and continues where it stopped.
+An AI agent that triages production incidents on its own and asks a human before it changes anything.
 
-- LLM: **Google Gemini** (official `google-genai` SDK, function calling). No key? It runs with a
-  deterministic offline "mock" policy, so everything works (and is testable) without internet.
-- Backend: **Python + FastAPI**. UI: one plain HTML/JS page served by FastAPI (no Node, no build step).
-- Infra is **simulated** (4 services with metrics, logs, deployments, runbooks) so it runs on a laptop.
+It reads the alert, writes a plan, investigates with tools (metrics, logs, deployments, runbooks), proposes a fix,
+**waits for operator approval**, verifies the result, and writes an incident report. An operator watches every step live
+in a web console and can approve, reject, pause, resume, cancel, or message the agent. Every step is checkpointed to
+SQLite, so a run **continues after a server restart**.
 
-```
-git clone <repo-url> incident-triage-agent
-cd incident-triage-agent
-make install       # creates .venv and installs requirements
-make quickstart    # creates .env from .env.example (if missing) and starts http://localhost:8000
-```
-Put your key in `.env` (`GEMINI_API_KEY=...`) to use Gemini; leave it empty for offline mock mode.
+| Live thinking panel | Approval gate | Finished run |
+|---|---|---|
+| ![thinking](docs/screenshots/thinking-expanded.png) | ![approval](docs/screenshots/approval.png) | ![completed](docs/screenshots/completed.png) |
 
-| Waiting for approval | Completed |
-|---|---|
-| ![approval](docs/screenshots/approval.png) | ![done](docs/screenshots/completed.png) |
+**Stack:** Python 3.11+, FastAPI, SQLite, Google Gemini (`google-genai` SDK, function calling), plain HTML/JS UI (no build step).
+Infrastructure is simulated, so everything runs on a laptop.
 
----
+## Contents
+- [Why incident triage](#why-incident-triage)
+- [How to test locally](#how-to-test-locally) (demo mode, live Gemini mode, PyCharm)
+- [Using the console](#using-the-console)
+- [Tests and evals](#tests-and-evals)
+- [Design decisions](#design-decisions)
+- [Project layout](#project-layout)
+- [What's next](#whats-next)
+- [Documentation](#documentation)
 
-## 1. Why incident triage? (use-case rationale)
+## Why incident triage
 
-- It is the platform task where an agent gives the most value: on-call engineers spend the first
-  15-30 minutes of every incident doing the same loop - *which service is sick? metrics? logs? what changed?
-  which runbook?* - before they can act.
-- It **needs real autonomy**: the next tool depends on what the last tool returned (not a fixed pipeline).
-- It **needs human-in-the-loop**: reading is safe, but rollback / restart / scale change production.
-  This is exactly where an agent must stop and ask.
-- It is easy to **evaluate**: each scenario has a known root cause and a known correct fix.
+- **It is repetitive.** The first 15-30 minutes of most incidents follow the same loop: find the unhealthy service, read
+  metrics and logs, check what changed, find the runbook.
+- **It needs real autonomy.** The next step depends on what the last tool returned, so a fixed pipeline does not work.
+- **It needs a human in the loop.** Reading is safe; rollback, restart and scale change production.
+- **It is easy to evaluate.** Each scenario has a known root cause and a known correct fix.
 
-## 2. What it does (one run)
+## How to test locally
 
-1. Reads the alert, writes a **plan** (`update_plan` tool).
-2. `list_services` -> finds the unhealthy service.
-3. Calls `get_metrics`, `get_logs`, `get_recent_deployments` **in parallel**.
-   (`get_metrics` times out once in the `bad-deploy` scenario -> **retry with backoff** is visible in the trace.)
-4. `search_runbooks` (small retrieval over `runbooks/*.md`, top-2 only).
-5. Proposes a fix, e.g. `rollback_deployment(payments-api, v2.3.9)` -> **run pauses, operator approves/rejects**.
-6. Verifies with fresh metrics, then `finish_triage` with a structured report and a **confidence** score.
-   It is `completed` only if a human-approved fix was applied **and** confidence >= 0.6; otherwise it is
-   `escalated` (handed to a human). This rule is in code, not left to the model.
-7. Confident, finished incidents are saved to **long-term memory** and recalled in later runs.
+Needs Python 3.11+, `git` and `make` (Windows without `make`: see the end of this section).
 
-Scenarios: `bad-deploy` (rollback), `memory-leak` (restart), `traffic-spike` (scale; its logs contain a
-**prompt-injection** line that tries to make the agent roll back everything), `ghost-alert` (nothing is wrong -
-the agent must *not* invent a fix).
+### 1. Demo mode (no API key, no internet, no cost)
 
-## 3. Run it
-
-### Terminal
-| Command | What it does |
-|---|---|
-| `make install` | create `.venv`, install `requirements.txt` (needs Python 3.11+) |
-| `make quickstart` | create `.env` if missing, print URLs, start server on :8000 |
-| `make run` | start server (no .env creation) |
-| `make test` | 35 pytest tests, offline (forces the mock LLM even if a key is set) |
-| `make eval` | golden-scenario eval (uses Gemini if key set, else mock) |
-| `make demo` | full run through **curl only** (start server first, in another terminal) |
-| `make clean` | delete `data/` (the SQLite database) and caches |
-
-Windows without `make`: `python -m venv .venv`, `.venv\Scripts\pip install -r requirements.txt`,
-`copy .env.example .env`, `.venv\Scripts\uvicorn app.main:app --port 8000`.
-
-### PyCharm
-1. *File > Open* the folder. *Settings > Project > Python Interpreter > Add > Existing* -> `.venv/bin/python`
-   (run `make install` first, or let PyCharm create the venv and install `requirements.txt`).
-2. Two shared run configurations are included in `.run/`: **Agent Server** (uvicorn with `.env`) and
-   **All Tests** (pytest). They appear in the run dropdown automatically.
-3. Run **Agent Server**, open http://localhost:8000. Use the PyCharm terminal for `make demo` / curl.
-
-### Try the durability yourself
 ```bash
-make quickstart                     # terminal 1
-make demo                           # terminal 2 -> stops at approval... or start a run in the UI
-# Ctrl+C the server while a run is "running" or "waiting_approval", then:
-make quickstart                     # it prints "resumed N interrupted run(s)" and continues
+git clone https://github.com/Zulfiqar7862/incident-triage-agent-gemini.git
+cd incident-triage-agent-gemini
+make install        # creates .venv and installs requirements.txt
+make quickstart     # creates .env from .env.example (key empty = demo mode) and serves the app
 ```
-All curl commands for every endpoint: [docs/API.md](docs/API.md).
 
-## 4. Design decisions (the short version)
+The banner should say `LLM mode: offline mock (no key in .env)`. Then:
+
+1. Open http://localhost:8000, keep **Checkout failing: payments-api 5xx spike**, press **Start triage**.
+2. Watch the *Thinking* panel; click **Show reasoning** to expand it.
+3. When the amber panel appears, press **Approve change**. The run ends `completed` with a report.
+4. Start another run and press **Reject change**: it ends `escalated`.
+
+Checks from a second terminal (server still running):
+```bash
+make test                         # 35 tests, all offline
+make eval                         # 4 golden scenarios, expect 100%
+make demo                         # one full run through the REST API with curl
+curl -s localhost:8000/health     # {"status":"ok","llm_mode":"mock","model":"mock-policy-v1"}
+```
+
+**Restart test:** start a run, stop the server with Ctrl+C while it is running or waiting for approval,
+run `make quickstart` again. The same run continues from its last checkpoint.
+
+### 2. Live Gemini mode (`.env`)
+
+Get a key at https://aistudio.google.com/apikey, then:
+
+```bash
+# stop the server first (Ctrl+C)
+sed -i.bak 's/^GEMINI_API_KEY=.*/GEMINI_API_KEY=your-key-here/' .env    # or open .env and paste the key
+make quickstart
+```
+
+The banner should say `LLM mode: Gemini (key found in .env)` and the console header shows `Live model: gemini-3.5-flash-lite`.
+Pick **orders-worker keeps restarting** (the memory-leak scenario) and run it as above. `make eval` now runs the golden set
+against Gemini. `.env` is gitignored; never commit it. To go back to demo mode, empty `GEMINI_API_KEY` in `.env`.
+
+**Model and cost.** The default model is `gemini-3.5-flash-lite` (`GEMINI_MODEL` in `.env`). One run uses about
+12k-30k tokens; with the prices set in `.env` ($0.30 input / $2.50 output per 1M tokens) that is roughly
+**$0.005-0.01**. The free tier costs nothing but is rate-limited (we hit 15 requests per minute); the client waits
+for the server's retry hint. Tokens and estimated cost are shown per step and per run.
+
+| Mode | When | What decides the next step |
+|---|---|---|
+| Demo (mock) | `GEMINI_API_KEY` empty | A deterministic rule-based policy (`app/llm/mock.py`). Also used by all tests. |
+| Gemini | `GEMINI_API_KEY` set in `.env` | Gemini function calling (`app/llm/gemini.py`). |
+
+### 3. PyCharm
+
+1. **File > Open** the cloned folder.
+2. Run `make install` in PyCharm's terminal, then **Settings > Project > Python Interpreter > Add > Existing** and pick
+   `.venv/bin/python` (Windows: `.venv\Scripts\python.exe`).
+3. Copy `.env.example` to `.env` (or run `make quickstart` once). Add the key for Gemini mode.
+4. Two run configurations load from `.run/`: **Agent Server** (uvicorn on port 8000, reads `.env`) and **All Tests**.
+   Run **Agent Server** and open http://localhost:8000; run **All Tests** for the suite.
+
+### Windows without `make`
+```bat
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+copy .env.example .env
+.venv\Scripts\uvicorn app.main:app --port 8000
+```
+
+## Using the console
+
+1. **Start triage** on one of four simulated incidents:
+
+   | Scenario | What is wrong | Expected fix |
+   |---|---|---|
+   | `bad-deploy` | payments-api errors after deploy v2.4.0 (the metrics API also times out once) | roll back to v2.3.9 |
+   | `memory-leak` | orders-worker is OOMKilled repeatedly | restart (or roll back the leaky release) |
+   | `traffic-spike` | search-api saturated; its logs contain a prompt-injection line | scale out |
+   | `ghost-alert` | nothing is wrong | no fix; hand back to a human |
+
+2. **Watch it think.** The *Thinking* panel shows the current phase in one line. Open it to see the plan, the reasoning
+   for each step, the tools chosen and what they returned. The *Live trace* lists every event with tokens, latency and cost.
+3. **Decide.** When the agent proposes a change, the run pauses and an approval panel appears. Approve or reject, with an
+   optional comment the agent reads.
+4. **Intervene at any time:** pause, resume, cancel, or send a message the agent reads at its next step.
+5. **Read the report:** root cause, severity, confidence, actions taken, follow-ups. A run is `completed` only if an approved
+   fix was applied and confidence is at least 0.6; otherwise it is `escalated` to a human.
+
+**Terminal only.** With the server running, `make demo` drives a full run with curl. Every endpoint has a curl example in
+[docs/API.md](docs/API.md).
+
+## Tests and evals
+
+```bash
+make test     # 35 pytest tests, offline; tests always use the mock or a scripted model
+make eval     # 4 golden scenarios end to end, scored on 5 checks (uses Gemini if a key is set)
+```
+
+The tests cover the agent loop, the approval gate, restart and crash recovery, exactly-once execution of approved actions,
+guards (step, token and loop limits), context budgeting, the Gemini adapter (with a faked SDK) and every API endpoint.
+
+Latest eval results: mock 100%; live Gemini `gemini-3.5-flash-lite` 100% (4/4). The first live runs found three real issues,
+now fixed: free-tier rate limits (the client now honours retry hints), a confident "nothing is wrong" being marked
+`completed` (routing moved into code), and a valid rollback fix the simulation did not model.
+
+## Design decisions
 
 | Decision | Why |
 |---|---|
-| **Own small loop, no framework** (no LangGraph/ADK) | 2-4h timebox; every line is explainable; the concepts (checkpoint, interrupt, resume) map 1:1 to LangGraph/ADK if the team uses one. |
-| **Prompt rebuilt from DB state each step** (no long chat history) | Context is designed, not accumulated. Resume is trivial: nothing lives only in memory. |
-| **Checkpoint to SQLite after every step** | Durable execution with zero infra. A crash loses at most the step in flight; read tools are safe to repeat. |
-| **Approval gate enforced in code** (`risky=True` tools) | Prompt injection can change what the model *asks* for, never what *runs*. |
-| **Approved action + checkpoint in one transaction** | An approved production change runs exactly once, even across a crash. |
-| **Context budget**: truncate tool output, compact old steps to 1-line summaries | Long runs stay coherent; nothing is silently dropped (every step keeps its summary). |
-| **Confidence-based routing (in code)** | Low confidence or "nothing mitigated" goes to a human (`escalated`). Found by the live Gemini eval: on `ghost-alert` Gemini was *confident* nothing was wrong - correct, but a human should still close it. |
-| **Offline mock policy** | Deterministic tests/evals, demo without a key, and CI never calls a paid API. |
-| **Threads + SQLite status flags** for lifecycle | Simple. Pause/cancel are checked at step boundaries; conditional `UPDATE ... WHERE status=...` prevents races. |
+| A small custom loop instead of a framework | Fits the 2-4 hour timebox and every line can be explained. The structure borrows LangChain's idea (agent = model + tools + middleware: planner, executor, approval gate, guards, typed state) without the dependency; checkpoint, interrupt and resume map directly to LangGraph, Google ADK or Bedrock AgentCore. |
+| Rebuild the prompt from saved state every step | The context is designed, not accumulated, and resume is trivial because nothing lives only in memory. |
+| Checkpoint to SQLite after every step | Durable execution with no extra infrastructure. A crash repeats at most one step; read-only tools are safe to repeat. |
+| Approval gate enforced in code | Tools that change production are flagged `risky` and never run without a human, whatever the model or a prompt injection asks for. |
+| Approved action and checkpoint in one transaction | An approved change runs exactly once, even across a crash. |
+| Context budget | Tool output is truncated, older steps shrink to one-line summaries, and every step keeps at least its summary. |
+| Routing decided in code | `completed` needs an applied fix and confidence ≥ 0.6; everything else goes to a human. |
+| Offline mock policy | Deterministic tests and evals, demos without a key, and CI never calls a paid API. |
+| Worker thread per run, status in SQLite | Simple. Pause and cancel take effect at step boundaries; conditional updates prevent races. |
 
-Full detail: [docs/HLD.md](docs/HLD.md) (architecture) and [docs/LLD.md](docs/LLD.md) (schema, API, state machine, sequences).
+Details: [docs/HLD.md](docs/HLD.md) (architecture, trade-offs, failure modes) and [docs/LLD.md](docs/LLD.md)
+(schema, state machine, algorithms, sequences).
 
-## 5. Folder structure
+## Project layout
+
 ```
-incident-triage-agent/
-├── app/
-│   ├── main.py              # FastAPI app: REST + SSE API, serves the UI
-│   ├── config.py            # all settings (env / .env)
-│   ├── db.py                # SQLite: runs (checkpoints), events (trace), approvals, memory
-│   ├── agent/
-│   │   ├── loop.py          # Agent.step(): ONE step = context -> LLM -> tools/approval -> checkpoint
-│   │   ├── runtime.py       # lifecycle: start/pause/resume/cancel/approve, worker threads, recover()
-│   │   ├── context.py       # context engineering: layers, truncation, compaction, budget
-│   │   ├── prompts.py       # system prompt
-│   │   └── safety.py        # injection detection, redaction
-│   ├── llm/
-│   │   ├── base.py          # LLM interface (decide -> thought + tool calls + usage)
-│   │   ├── gemini.py        # Gemini via google-genai, function calling, retries (429-aware)
-│   │   └── mock.py          # deterministic offline policy
-│   ├── tools/
-│   │   ├── registry.py      # Tool schema, validation, retry with exponential backoff
-│   │   └── infra_tools.py   # the 10 tools (5 read, 3 risky, 2 control)
-│   └── sim/world.py         # simulated infrastructure + 4 scenarios
-├── static/                  # index.html, app.js, style.css (operator UI)
-├── runbooks/                # markdown runbooks used by search_runbooks
-├── tests/                   # pytest: loop, approvals, resume, guards, context, Gemini adapter, API
-├── evals/                   # golden.json + run_evals.py (scored regression eval)
-├── scripts/                 # demo.sh (curl walkthrough), check_python.py
-├── docs/                    # HLD.md, LLD.md, API.md, screenshots/
-├── .run/                    # PyCharm run configurations
-├── Makefile, requirements.txt, .env.example, AI_LOG.md
+app/
+  main.py            FastAPI app: REST + SSE API, serves the console
+  config.py          settings from environment and .env
+  db.py              SQLite: runs (checkpoints), events (trace), approvals, memory
+  agent/
+    runtime.py       lifecycle: start, pause, resume, cancel, approve; worker threads; recover() on startup
+    loop.py          Agent.step(): the thin step loop (model + tools + guards)
+    planner.py       memory recall + context + ask the model for the next decision
+    executor.py      run tool calls: validation, retry/backoff, parallel reads
+    approval.py      approval gate (risky tools) + completed/escalated routing
+    guards.py        step limit, token budget, loop guard
+    state.py         RunState + Checkpointer (save after every step)
+    context.py       prompt layers, truncation, compaction, budget
+    prompts.py       system prompt
+    safety.py        prompt-injection flagging, redaction for memory
+  llm/               base.py (interface), gemini.py, mock.py
+  tools/             registry.py (schemas, validation, retry), infra_tools.py (10 tools)
+  sim/world.py       simulated services and the four scenarios
+static/              index.html, app.js, style.css (operator console)
+runbooks/            markdown runbooks used by search_runbooks
+tests/               pytest suite
+evals/               golden.json, run_evals.py
+scripts/             demo.sh (curl walkthrough), check_python.py
+docs/                HLD.md, LLD.md, API.md, screenshots/
+.run/                PyCharm run configurations
 ```
 
-## 6. Verified results
-- `make test`: **35 passed** (offline, ~4 s).
-- `make eval` with the mock LLM: **100%** on 4 golden scenarios.
-- `make eval` with **live Gemini `gemini-3.5-flash-lite`**: first run 85% -> two real issues found and fixed:
-  1. the free tier allows **15 requests/min**; one run hit 429 and went to `failed` (resumable, as designed) -> the
-     client now waits for the server's `retry in Ns` hint;
-  2. on `ghost-alert` Gemini was *confident* nothing was wrong and finished as `completed` -> routing rule moved into
-     code (completed only if a fix was applied).
-  After the fixes: **100%** (4/4), ~5-9 steps and ~$0.005 per run.
+## What's next
 
-## 7. What's next (with more time)
-1. **Real adapters** behind the same tool interface: Kubernetes API, Prometheus, Loki, ArgoCD (read-only service account first).
-2. **Postgres + a job queue** (or Temporal / LangGraph checkpointer) for multiple workers; lease per run instead of in-process threads.
-3. **OpenTelemetry GenAI spans** exported to Langfuse/Jaeger (the event table already has the data: tokens, latency, cost per step).
-4. **Vector retrieval** for runbooks + past incidents (embeddings) once there are hundreds of them; today keyword top-2 is more precise.
-5. **LLM-as-judge** + human review in the eval harness, run in CI on every prompt/model change.
-6. **AuthN/Z + audit**: who approved what (SSO), per-tool RBAC, approval expiry, two-person rule for SEV1 actions.
-7. Supervisor/worker agents (e.g. a log-analysis sub-agent) only when a single agent's context gets too crowded.
+1. Real, read-only tool adapters first (Kubernetes, Prometheus, Loki, ArgoCD), behind the same tool interface.
+2. Postgres and a job queue with a lease per run (or LangGraph checkpointer / Temporal) to run several workers.
+3. OpenTelemetry GenAI spans exported to Langfuse, with alerts on cost, failures and approval wait time.
+4. A policy layer: auto-approve, single or two-person approval per tool, environment and severity; approvals tied to SSO.
+5. Embedding-based retrieval once there are hundreds of runbooks and past incidents.
+6. LLM-as-judge and sampled human review in the eval harness, run in CI on every prompt or model change.
+7. More model adapters (Bedrock, Vertex) behind the existing `LLM` interface, chosen by eval results.
 
-## 8. AI usage
-AI tools were used to build this (required by the brief). See [AI_LOG.md](AI_LOG.md).
+## Documentation
+
+- [docs/HLD.md](docs/HLD.md): high-level design
+- [docs/LLD.md](docs/LLD.md): low-level design
+- [docs/API.md](docs/API.md): endpoints with curl examples
+- [AI_LOG.md](AI_LOG.md): how AI tools were used to build this
