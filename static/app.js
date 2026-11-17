@@ -1,8 +1,44 @@
 // Operator console: plain JS, no build step.
 // Run state is polled; the trace arrives over Server-Sent Events.
+// Sections: state, pure helpers, API client, banner + actions, SSE stream, renderers, data loading, handlers.
+
+// ===========================================================================
+// State
+// ===========================================================================
 const $ = (id) => document.getElementById(id);
 let current = null, es = null, lastEventId = 0, pollTimer = null;
+let bannerKind = null;
 
+// ===========================================================================
+// Pure helpers (string in, string out)
+// ===========================================================================
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const label = (status) => status.replace("_", " ");
+const statusPill = (status) => `<span class="status s-${status}">${label(status)}</span>`;
+const time = (ts) => new Date(ts * 1000).toLocaleTimeString();
+const call = (tool, args) => `<code>${esc(tool)}(${esc(JSON.stringify(args))})</code>`;
+// "top runbooks: ['a', 'b']" -> "top runbooks: a, b"
+const plainList = (text) => String(text).replace(/\[([^\]]*)\]/g, (_, inner) => inner.replace(/['"]/g, ""));
+const humanize = (key) => key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+const humanValue = (v) => (typeof v === "object" ? Object.entries(v).map(([k, x]) => `${humanize(k)}: ${x}`).join(", ") : String(v));
+// model text sometimes embeds the raw call ("Proposing rollback_deployment {...}"); the card shows it as fields instead
+const plainReason = (text) => (text || "")
+  .replace(/Proposing \w+ \{[^}]*\}\s*-\s*this changes production so it needs approval\.?/g,
+    "It proposes the change on the left. That changes production, so it needs your approval.")
+  .replace(/Proposing \w+ \{[^}]*\}/g, "It proposes the change on the left")
+  .replace(/\s+/g, " ").trim();
+
+// Provider errors can carry a long JSON dump: show the first sentence, keep the rest one click away.
+function errorHtml(error) {
+  const cut = error.search(/\s[{[]/);
+  const short = cut > 0 ? error.slice(0, cut).replace(/[.\s]+$/, "") : error;
+  return `<b>The run stopped.</b> ${esc(short)}. Press <b>Resume run</b> to continue from the last checkpoint.`
+    + (cut > 0 ? `<details><summary>Show full error</summary><pre>${esc(error)}</pre></details>` : "");
+}
+
+// ===========================================================================
+// API client
+// ===========================================================================
 async function api(path, opts = {}) {
   let r;
   try {
@@ -14,10 +50,13 @@ async function api(path, opts = {}) {
   if (!r.ok) throw new Error(body.detail || `${r.status} ${r.statusText}`);
   return body;
 }
+const post = (path, data) => api(path, { method: "POST", body: JSON.stringify(data || {}) });
 
+// ===========================================================================
+// Error banner and button actions
+// ===========================================================================
 // Error banner: background polling errors clear themselves once the server answers again;
 // errors from a button press stay until the next action or Retry.
-let bannerKind = null;
 function showError(msg, kind = "action") {
   bannerKind = kind;
   $("banner-text").innerHTML = `<b>${kind === "conn" ? "Connection problem." : "That didn't work."}</b> ${esc(msg)}`;
@@ -41,79 +80,16 @@ const poll = (fn) => async () => {
     if (es && es.readyState !== EventSource.CLOSED) setConn("lost", "Disconnected. Reconnecting…");
   }
 };
-const post = (path, data) => api(path, { method: "POST", body: JSON.stringify(data || {}) });
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const label = (status) => status.replace("_", " ");
-const statusPill = (status) => `<span class="status s-${status}">${label(status)}</span>`;
-const time = (ts) => new Date(ts * 1000).toLocaleTimeString();
-const call = (tool, args) => `<code>${esc(tool)}(${esc(JSON.stringify(args))})</code>`;
 
-async function init() {
-  $("banner-retry").onclick = () => { clearError(); poll(loadRuns)(); poll(refresh)(); };
-  let h;
-  try { h = await api("/health"); } catch (err) {
-    $("mode").textContent = "Server unreachable";
-    showError(`${err.message} Then press Retry now or reload the page.`, "conn");
-    $("banner-retry").onclick = () => location.reload();
-    return;
-  }
-  $("mode").textContent = h.llm_mode === "gemini" ? `Live model: ${h.model}` : "Offline demo mode (no API key)";
-  const scenarios = await api("/api/scenarios");
-  $("scenario").innerHTML = scenarios.map((s) => `<option value="${s.id}">${esc(s.title)}</option>`).join("");
-  $("scenario").disabled = false;
-  $("start").disabled = false;
-  const showAlert = () => { $("scenario-alert").textContent = scenarios.find((s) => s.id === $("scenario").value).alert; };
-  $("scenario").onchange = showAlert;
-  showAlert();
-  $("start").onclick = () => act($("start"), "Starting…", async () => {
-    const r = await post("/api/runs", { scenario: $("scenario").value });
-    select(r.id);
-  });
-  $("pause").onclick = () => act($("pause"), "Pausing…", () => post(`/api/runs/${current}/pause`));
-  $("resume").onclick = () => act($("resume"), "Resuming…", () => post(`/api/runs/${current}/resume`));
-  $("cancel").onclick = () => confirm("Cancel this run?")
-    && act($("cancel"), "Cancelling…", () => post(`/api/runs/${current}/cancel`));
-  $("approve").onclick = () => act($("approve"), "Approving…", () => decide("approve"));
-  $("reject").onclick = () => act($("reject"), "Rejecting…", () => decide("reject"));
-  $("send").onclick = () => {
-    const m = $("guidance").value.trim();
-    if (!m) return;
-    act($("send"), "Sending…", async () => {
-      await post(`/api/runs/${current}/guidance`, { message: m });
-      $("guidance").value = "";
-    });
-  };
-  await poll(loadRuns)();
-  const fromUrl = new URLSearchParams(location.search).get("run");
-  if (fromUrl) select(fromUrl);
-  setInterval(poll(loadRuns), 3000);
+// ===========================================================================
+// Live trace stream (SSE)
+// ===========================================================================
+function setConn(kind, text) {
+  $("conn").className = `conn ${kind}`;
+  $("conn").textContent = text;
 }
 
-async function decide(d) {
-  await post(`/api/runs/${current}/approval`, { decision: d, comment: $("ap-comment").value });
-  $("ap-comment").value = "";
-}
-
-async function loadRuns() {
-  const runs = await api("/api/runs");
-  $("runs").innerHTML = runs.map((r) => `<li data-id="${r.id}" class="${r.id === current ? "active" : ""}">
-      <span>${esc(r.title)}<br><span class="sub">Started ${time(r.created_at)}</span></span>
-      ${statusPill(r.status)}</li>`).join("") || '<li class="state">No runs yet. Pick an incident above and press Start triage.</li>';
-  document.querySelectorAll("#runs li[data-id]").forEach((li) => (li.onclick = () => select(li.dataset.id)));
-  const mem = await api("/api/memory");
-  $("memory").innerHTML = mem.map((m) => `<li><b>${esc(m.service)}</b>: ${esc(m.root_cause)}</li>`).join("")
-    || '<li class="state">Nothing yet. Each resolved incident is remembered here and used in later runs.</li>';
-}
-
-function select(id) {
-  current = id;
-  lastEventId = 0;
-  history.replaceState(null, "", `?run=${id}`);
-  $("empty").hidden = true;
-  $("run").hidden = false;
-  $("timeline").innerHTML = "";
-  $("trace-empty").hidden = false;
-  think.reset();
+function openStream(id) {
   if (es) es.close();
   setConn("", "Connecting…");
   es = new EventSource(`/api/runs/${id}/stream`);
@@ -126,28 +102,37 @@ function select(id) {
     if (e.id > lastEventId) { lastEventId = e.id; addEvent(e); think.add(e); refresh(); }
   });
   es.addEventListener("end", () => { es.close(); setConn("", "Trace complete"); });
-  clearInterval(pollTimer);
-  pollTimer = setInterval(poll(refresh), 1500);
-  poll(refresh)();
-  poll(loadRuns)();
 }
 
-// Provider errors can carry a long JSON dump: show the first sentence, keep the rest one click away.
-function errorHtml(error) {
-  const cut = error.search(/\s[{[]/);
-  const short = cut > 0 ? error.slice(0, cut).replace(/[.\s]+$/, "") : error;
-  return `<b>The run stopped.</b> ${esc(short)}. Press <b>Resume run</b> to continue from the last checkpoint.`
-    + (cut > 0 ? `<details><summary>Show full error</summary><pre>${esc(error)}</pre></details>` : "");
+// ===========================================================================
+// Renderers
+// ===========================================================================
+const planHtml = (plan) => (plan || []).map((p) => `<li>${esc(p)}</li>`).join("")
+  || '<li class="state">The agent writes its plan in the first step.</li>';
+
+const infraHtml = (infra) => Object.entries(infra).map(([n, s]) =>
+  `<tr><td><b>${esc(n)}</b></td><td>${statusPill(s.status)}</td><td>${esc(s.version)}</td><td>${s.replicas} pods</td></tr>`).join("");
+
+const reportHtml = (rep, status) => `<h2>${status === "escalated" ? "Handed to a human" : "Incident report"}</h2>
+      <p><b>Root cause:</b> ${esc(rep.root_cause)}</p>
+      <p><b>Severity:</b> ${esc(rep.severity)}. <b>Confidence:</b> ${Math.round((rep.confidence || 0) * 100)}%</p>
+      <p><b>Why this outcome:</b> ${esc(rep.routing_reason || "")}</p>
+      <p><b>Actions taken:</b> ${esc((rep.actions_taken || []).join("; ") || "none")}</p>
+      <p><b>Follow-ups:</b></p><ul>${(rep.follow_ups || []).map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`;
+
+function renderRunList(runs) {
+  $("runs").innerHTML = runs.map((r) => `<li data-id="${r.id}" class="${r.id === current ? "active" : ""}">
+      <span>${esc(r.title)}<br><span class="sub">Started ${time(r.created_at)}</span></span>
+      ${statusPill(r.status)}</li>`).join("") || '<li class="state">No runs yet. Pick an incident above and press Start triage.</li>';
+  document.querySelectorAll("#runs li[data-id]").forEach((li) => (li.onclick = () => select(li.dataset.id)));
 }
 
-function setConn(kind, text) {
-  $("conn").className = `conn ${kind}`;
-  $("conn").textContent = text;
+function renderMemory(mem) {
+  $("memory").innerHTML = mem.map((m) => `<li><b>${esc(m.service)}</b>: ${esc(m.root_cause)}</li>`).join("")
+    || '<li class="state">Nothing yet. Each resolved incident is remembered here and used in later runs.</li>';
 }
 
-async function refresh() {
-  if (!current) return;
-  const r = await api(`/api/runs/${current}`);
+function renderRun(r) {
   $("run-title").textContent = r.title;
   $("run-alert").textContent = r.alert;
   $("run-status").className = `status s-${r.status}`;
@@ -165,9 +150,8 @@ async function refresh() {
   const waiting = (r.approvals || []).filter((a) => a.status === "pending").length;
   $("st-approvals").textContent = waiting ? `${waiting} waiting for you` : "None pending";
   $("st-approvals").classList.toggle("waiting", waiting > 0);
-  $("plan").innerHTML = (r.plan || []).map((p) => `<li>${esc(p)}</li>`).join("") || '<li class="state">The agent writes its plan in the first step.</li>';
-  $("infra").innerHTML = Object.entries(r.infra).map(([n, s]) =>
-    `<tr><td><b>${esc(n)}</b></td><td>${statusPill(s.status)}</td><td>${esc(s.version)}</td><td>${s.replicas} pods</td></tr>`).join("");
+  $("plan").innerHTML = planHtml(r.plan);
+  $("infra").innerHTML = infraHtml(r.infra);
   const ap = r.status === "waiting_approval" ? r.pending_approval : null;
   $("approval").hidden = !ap;
   if (ap) renderApproval(ap, r);
@@ -175,16 +159,10 @@ async function refresh() {
   $("report").hidden = !rep;
   if (rep) {
     $("report").className = "panel report " + r.status;
-    $("report").innerHTML = `<h2>${r.status === "escalated" ? "Handed to a human" : "Incident report"}</h2>
-      <p><b>Root cause:</b> ${esc(rep.root_cause)}</p>
-      <p><b>Severity:</b> ${esc(rep.severity)}. <b>Confidence:</b> ${Math.round((rep.confidence || 0) * 100)}%</p>
-      <p><b>Why this outcome:</b> ${esc(rep.routing_reason || "")}</p>
-      <p><b>Actions taken:</b> ${esc((rep.actions_taken || []).join("; ") || "none")}</p>
-      <p><b>Follow-ups:</b></p><ul>${(rep.follow_ups || []).map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`;
+    $("report").innerHTML = reportHtml(rep, r.status);
   }
 }
 
-// ---------------------------------------------------------------------------
 // Approval card: a plain-language review of the proposed change, built only from
 // data the run already has (pending approval, steps, tool summaries).
 const ACTIONS = {
@@ -212,16 +190,7 @@ const FIELDS = {
   to_version: ["Target version", "The version the service runs after the rollback"],
   replicas: ["Replicas", "How many pods the service runs after the change"],
 };
-// "top runbooks: ['a', 'b']" -> "top runbooks: a, b"
-const plainList = (text) => String(text).replace(/\[([^\]]*)\]/g, (_, inner) => inner.replace(/['"]/g, ""));
-const humanize = (key) => key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
-const humanValue = (v) => (typeof v === "object" ? Object.entries(v).map(([k, x]) => `${humanize(k)}: ${x}`).join(", ") : String(v));
-// model text sometimes embeds the raw call ("Proposing rollback_deployment {...}"); the card shows it as fields instead
-const plainReason = (text) => (text || "")
-  .replace(/Proposing \w+ \{[^}]*\}\s*-\s*this changes production so it needs approval\.?/g,
-    "It proposes the change on the left. That changes production, so it needs your approval.")
-  .replace(/Proposing \w+ \{[^}]*\}/g, "It proposes the change on the left")
-  .replace(/\s+/g, " ").trim();
+const FINDING = { get_metrics: "Metrics", get_logs: "Logs", get_recent_deployments: "Latest deploy", search_runbooks: "Runbook" };
 
 function renderApproval(ap, r) {
   const action = ACTIONS[ap.tool];
@@ -249,7 +218,6 @@ function renderApproval(ap, r) {
   for (const s of steps) for (const c of s.calls || []) {
     if (c.ok && !c.risky && !["list_services", "update_plan", "finish_triage"].includes(c.tool)) latest.set(c.tool, c.summary);
   }
-  const FINDING = { get_metrics: "Metrics", get_logs: "Logs", get_recent_deployments: "Latest deploy", search_runbooks: "Runbook" };
   $("ap-findings").innerHTML = [...latest].slice(-4).map(([tool, summary]) =>
     `<li><b>${esc(FINDING[tool] || humanize(tool))}:</b> ${esc(plainList(summary))}</li>`).join("")
     || '<li class="state">No findings recorded yet.</li>';
@@ -289,7 +257,6 @@ function addEvent(e) {
   $("trace-empty").hidden = true;
 }
 
-// ---------------------------------------------------------------------------
 // Thinking panel: a one-line live summary of what the agent is doing, built only
 // from trace events the backend already sends. Click to see the reasoning.
 const PHASES = ["Understanding the incident", "Planning", "Acting", "Concluding"];
@@ -372,5 +339,87 @@ const think = {
     return html;
   },
 };
+
+// ===========================================================================
+// Data loading
+// ===========================================================================
+async function loadRuns() {
+  renderRunList(await api("/api/runs"));
+  renderMemory(await api("/api/memory"));
+}
+
+async function refresh() {
+  if (!current) return;
+  renderRun(await api(`/api/runs/${current}`));
+}
+
+function select(id) {
+  current = id;
+  lastEventId = 0;
+  history.replaceState(null, "", `?run=${id}`);
+  $("empty").hidden = true;
+  $("run").hidden = false;
+  $("timeline").innerHTML = "";
+  $("trace-empty").hidden = false;
+  think.reset();
+  openStream(id);
+  clearInterval(pollTimer);
+  pollTimer = setInterval(poll(refresh), 1500);
+  poll(refresh)();
+  poll(loadRuns)();
+}
+
+// ===========================================================================
+// Event handlers and start-up
+// ===========================================================================
+async function init() {
+  $("banner-retry").onclick = () => { clearError(); poll(loadRuns)(); poll(refresh)(); };
+  let h;
+  try { h = await api("/health"); } catch (err) {
+    $("mode").textContent = "Server unreachable";
+    showError(`${err.message} Then press Retry now or reload the page.`, "conn");
+    $("banner-retry").onclick = () => location.reload();
+    return;
+  }
+  $("mode").textContent = h.llm_mode === "gemini" ? `Live model: ${h.model}` : "Offline demo mode (no API key)";
+  const scenarios = await api("/api/scenarios");
+  $("scenario").innerHTML = scenarios.map((s) => `<option value="${s.id}">${esc(s.title)}</option>`).join("");
+  $("scenario").disabled = false;
+  $("start").disabled = false;
+  const showAlert = () => { $("scenario-alert").textContent = scenarios.find((s) => s.id === $("scenario").value).alert; };
+  $("scenario").onchange = showAlert;
+  showAlert();
+  bindHandlers();
+  await poll(loadRuns)();
+  const fromUrl = new URLSearchParams(location.search).get("run");
+  if (fromUrl) select(fromUrl);
+  setInterval(poll(loadRuns), 3000);
+}
+
+function bindHandlers() {
+  $("start").onclick = () => act($("start"), "Starting…", async () => {
+    const r = await post("/api/runs", { scenario: $("scenario").value });
+    select(r.id);
+  });
+  $("pause").onclick = () => act($("pause"), "Pausing…", () => post(`/api/runs/${current}/pause`));
+  $("resume").onclick = () => act($("resume"), "Resuming…", () => post(`/api/runs/${current}/resume`));
+  $("cancel").onclick = () => confirm("Cancel this run?")
+    && act($("cancel"), "Cancelling…", () => post(`/api/runs/${current}/cancel`));
+  $("approve").onclick = () => act($("approve"), "Approving…", () => decide("approve"));
+  $("reject").onclick = () => act($("reject"), "Rejecting…", () => decide("reject"));
+  $("send").onclick = () => {
+    const m = $("guidance").value.trim();
+    if (!m) return;
+    act($("send"), "Sending…", async () => {
+      await post(`/api/runs/${current}/guidance`, { message: m });
+      $("guidance").value = "";
+    });
+  };
+}
+
+async function decide(d) {
+  await post(`/api/runs/${current}/approval`, { decision: d, comment: $("ap-comment").value });
+  $("ap-comment").value = "";
+}
 
 init();

@@ -1,5 +1,10 @@
 /* Operator console. One loud element (the decision panel); everything else stays quiet.
    Tokens first: every colour, size, space and radius below comes from :root. */
+
+/* ==========================================================================
+   1. Tokens
+   ========================================================================== */
+
 :root {
   /* colour: warm neutral surfaces, one muted accent, semantic colours only where they mean something */
   --ink: #2b2a27;            /* primary text */
@@ -52,6 +57,11 @@
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
 }
 
+
+/* ==========================================================================
+   2. Base: elements and text
+   ========================================================================== */
+
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--paper); color: var(--ink);
@@ -68,7 +78,16 @@ a { color: var(--accent); }
 code { font-family: var(--font-code); font-size: var(--fs-caption); }
 .stats, .ev-when, .run-list .sub, .meta, .th-title, .infra, .mode { font-variant-numeric: tabular-nums; }
 
-/* ---------------------------------------------------------------- layout */
+
+.hint, .alert-text { color: var(--muted); margin: var(--s-2) 0 var(--s-3); }
+.hint { font-size: var(--fs-caption); }
+label { display: block; font-size: var(--fs-caption); font-weight: 500; color: var(--ink-2); margin-bottom: var(--s-1); }
+
+
+/* ==========================================================================
+   3. Layout
+   ========================================================================== */
+
 .topbar { display: flex; align-items: center; gap: var(--s-5); padding: var(--s-3) var(--s-6);
   background: var(--panel); border-bottom: 1px solid var(--line); }
 .topbar h1 { flex: 1; font-size: var(--fs-h2); }
@@ -83,10 +102,10 @@ code { font-family: var(--font-code); font-size: var(--fs-caption); }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card); padding: var(--s-5); }
 .sidebar .panel { background: transparent; }   /* the sidebar shares the canvas; a subtle edge is enough */
 
-/* ---------------------------------------------------------------- text */
-.hint, .alert-text { color: var(--muted); margin: var(--s-2) 0 var(--s-3); }
-.hint { font-size: var(--fs-caption); }
-label { display: block; font-size: var(--fs-caption); font-weight: 500; color: var(--ink-2); margin-bottom: var(--s-1); }
+
+/* ==========================================================================
+   4. Components
+   ========================================================================== */
 
 /* ---------------------------------------------------------------- buttons: secondary (default), primary, danger */
 button {
@@ -117,35 +136,12 @@ button[aria-busy="true"]::before { content: ""; display: inline-block; width: 10
 .actions { display: flex; gap: var(--s-2); flex-wrap: wrap; margin-top: var(--s-4); }
 .inline { display: flex; gap: var(--s-2); }
 
+
 /* ---------------------------------------------------------------- inputs */
 select, input { font: inherit; width: 100%; min-height: var(--hit); padding: var(--s-2) var(--s-3);
   border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--inset); color: var(--ink); }
 select:disabled { color: var(--faint); }
 
-/* ---------------------------------------------------------------- states: empty, loading, error */
-.state { margin: 0; color: var(--muted); font-size: var(--fs-caption); }
-.empty-main { padding: var(--s-6) var(--s-5); }
-.empty-main h2 { margin-bottom: var(--s-2); }
-.empty-main p { margin: 0; color: var(--ink-2); max-width: 60ch; }
-.error-box { margin: var(--s-4) 0 0; padding: var(--s-3) var(--s-4); border: 1px solid var(--red-line);
-  border-left: 4px solid var(--red); border-radius: var(--r-control); background: var(--red-bg); color: var(--ink); }
-.error-box b { color: var(--red); }
-.error-box details { margin-top: var(--s-2); }
-.error-box summary { cursor: pointer; color: var(--red); font-size: var(--fs-caption); }
-.error-box pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-caption); margin: var(--s-2) 0 0; }
-.banner { display: flex; align-items: center; gap: var(--s-3); max-width: 1360px; margin: var(--s-4) auto 0;
-  padding: var(--s-3) var(--s-6); }
-.banner[hidden] { display: none; }
-.banner .error-box { margin: 0; flex: 1; }
-.conn { font-size: var(--fs-caption); font-weight: 500; color: var(--muted); }
-.conn::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: var(--s-2);
-  border-radius: 50%; background: var(--faint); }
-.conn.live { color: var(--accent); }
-.conn.live::before { background: var(--accent); }
-.conn.lost { color: var(--amber); }
-.conn.lost::before { background: var(--amber); }
-.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3); }
-.section-head h2 { margin-bottom: 0; }
 
 /* ---------------------------------------------------------------- run header */
 .run-title { display: flex; align-items: center; gap: var(--s-3); }
@@ -163,6 +159,7 @@ select:disabled { color: var(--faint); }
 .s-completed, .s-healthy { color: var(--green); border-color: var(--green-line); }
 .s-failed, .s-degraded, .s-down { color: var(--red); border-color: var(--red-line); }
 .s-paused, .s-cancelled, .s-pending { color: var(--muted); }
+
 
 /* ---------------------------------------------------------------- approval card: the one loud element */
 .decision { border-color: var(--amber-line); border-left: 4px solid var(--amber); background: var(--amber-bg); }
@@ -196,6 +193,7 @@ select:disabled { color: var(--faint); }
 .report p { margin: var(--s-1) 0; }
 .report ul { margin: var(--s-1) 0 0; padding-left: var(--s-5); }
 
+
 /* ---------------------------------------------------------------- lists */
 .run-list, .memory-list { list-style: none; padding: 0; margin: 0; }
 .run-list { max-height: 320px; overflow: auto; overscroll-behavior: contain; }
@@ -209,6 +207,7 @@ select:disabled { color: var(--faint); }
 .plan li { margin-bottom: var(--s-1); }
 .infra { width: 100%; border-collapse: collapse; font-size: var(--fs-caption); }
 .infra td { padding: var(--s-2) var(--s-1); border-bottom: 1px solid var(--line); }
+
 
 /* ---------------------------------------------------------------- trace: a label column says what kind of event each row is */
 .timeline { display: flex; flex-direction: column; }
@@ -226,6 +225,7 @@ select:disabled { color: var(--faint); }
 .ev details summary { cursor: pointer; color: var(--accent); font-size: var(--fs-caption); }
 .ev details pre { background: var(--inset); border: 1px solid var(--line); padding: var(--s-2); border-radius: var(--r-control);
   overflow: auto; white-space: pre-wrap; }
+
 
 /* ---------------------------------------------------------------- thinking panel: one line collapsed, the reasoning when opened */
 .thinking { padding: var(--s-3) var(--s-5); }
@@ -250,11 +250,49 @@ select:disabled { color: var(--faint); }
 .th-step .why { font-style: italic; }
 .th-step .meta { color: var(--muted); font-size: var(--fs-caption); }
 
+
+/* ==========================================================================
+   5. States: empty, loading, error
+   ========================================================================== */
+
+.state { margin: 0; color: var(--muted); font-size: var(--fs-caption); }
+.empty-main { padding: var(--s-6) var(--s-5); }
+.empty-main h2 { margin-bottom: var(--s-2); }
+.empty-main p { margin: 0; color: var(--ink-2); max-width: 60ch; }
+.error-box { margin: var(--s-4) 0 0; padding: var(--s-3) var(--s-4); border: 1px solid var(--red-line);
+  border-left: 4px solid var(--red); border-radius: var(--r-control); background: var(--red-bg); color: var(--ink); }
+.error-box b { color: var(--red); }
+.error-box details { margin-top: var(--s-2); }
+.error-box summary { cursor: pointer; color: var(--red); font-size: var(--fs-caption); }
+.error-box pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-caption); margin: var(--s-2) 0 0; }
+.banner { display: flex; align-items: center; gap: var(--s-3); max-width: 1360px; margin: var(--s-4) auto 0;
+  padding: var(--s-3) var(--s-6); }
+.banner[hidden] { display: none; }
+.banner .error-box { margin: 0; flex: 1; }
+.conn { font-size: var(--fs-caption); font-weight: 500; color: var(--muted); }
+.conn::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: var(--s-2);
+  border-radius: 50%; background: var(--faint); }
+.conn.live { color: var(--accent); }
+.conn.live::before { background: var(--accent); }
+.conn.lost { color: var(--amber); }
+.conn.lost::before { background: var(--amber); }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3); }
+.section-head h2 { margin-bottom: 0; }
+
+
+/* ==========================================================================
+   6. Motion (only when the user allows it)
+   ========================================================================== */
+
 @media (prefers-reduced-motion: no-preference) {
   .thinking.live .th-dot { animation: pulse 1.4s ease-in-out infinite; }
 }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
 @keyframes spin { to { rotate: 360deg; } }
+
+/* ==========================================================================
+   7. Narrow screens
+   ========================================================================== */
 
 /* narrow screens: single column (kept from before; desktop is the target) */
 @media (max-width: 900px) {
