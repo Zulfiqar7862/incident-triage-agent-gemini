@@ -18,6 +18,7 @@ what to include and how to export it. Replace the placeholder section with the r
 | Code | Generated first drafts of modules and tests | Reviewed each; fixed a mock-policy bug where post-fix metrics changed the diagnosis |
 | Live testing | Ran eval against Gemini | Found free-tier 429 (15 RPM) -> added retry-hint handling (commit "honour Gemini 429 retry hints") |
 | Live testing (2) | Fresh-clone run with Gemini | Gemini chose to roll back the release that added the leaky cache (a valid fix the sim did not model) -> sim + golden set now accept restart OR rollback |
+| UI polish | Anthropic's `frontend-design` skill (github.com/anthropics/skills) guided the UI pass: plan tokens first, one loud element, sentence-case action labels, structure that carries meaning | Kept it a quiet operator console; only the approval panel is loud; no behavior or API changes; verified in headless Chrome |
 | Docs | Drafted HLD/LLD/README | Edited for plain language |
 
 ## Transcript

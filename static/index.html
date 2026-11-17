@@ -4,92 +4,98 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Incident Triage Agent</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header>
-  <h1>🛠️ Incident Triage Agent</h1>
-  <span id="mode" class="badge">…</span>
-  <a href="/docs" target="_blank">API docs</a>
+<header class="topbar">
+  <h1>Incident Triage Agent</h1>
+  <span id="mode" class="mode">Connecting…</span>
+  <a href="/docs" target="_blank" rel="noopener">API docs</a>
 </header>
-<main>
-  <aside>
-    <section class="card">
-      <h2>New incident</h2>
+
+<main class="layout">
+  <aside class="sidebar">
+    <section class="panel">
+      <h2>Start a triage run</h2>
+      <label for="scenario">Incident</label>
       <select id="scenario"></select>
-      <p id="scenario-alert" class="muted small"></p>
-      <button id="start" class="primary">▶ Start triage</button>
+      <p id="scenario-alert" class="hint"></p>
+      <button id="start" class="primary">Start triage</button>
     </section>
-    <section class="card">
+    <section class="panel">
       <h2>Runs</h2>
-      <ul id="runs"></ul>
+      <ul id="runs" class="run-list"></ul>
     </section>
-    <section class="card">
-      <h2>Long-term memory</h2>
-      <ul id="memory" class="small"></ul>
+    <section class="panel">
+      <h2>Past incidents the agent remembers</h2>
+      <ul id="memory" class="memory-list"></ul>
     </section>
   </aside>
 
-  <section id="detail">
-    <div id="empty" class="card muted">Start a run or pick one from the list.</div>
+  <section class="content">
+    <div id="empty" class="panel empty">Pick an incident and press <b>Start triage</b>, or open a run from the list.</div>
+
     <div id="run" hidden>
-      <div class="card">
-        <div class="row">
+      <section class="panel run-head">
+        <div class="run-title">
           <h2 id="run-title"></h2>
-          <span id="run-status" class="badge"></span>
+          <span id="run-status" class="status"></span>
         </div>
-        <p id="run-alert" class="muted"></p>
-        <div class="row stats">
-          <span>Step <b id="st-step">0</b></span>
-          <span>Tokens <b id="st-tokens">0</b></span>
-          <span>Cost <b id="st-cost">$0</b></span>
-          <span>LLM <b id="st-llm"></b></span>
-        </div>
-        <div class="row">
-          <button id="pause">⏸ Pause</button>
-          <button id="resume">▶ Resume</button>
-          <button id="cancel" class="danger">✖ Cancel</button>
+        <p id="run-alert" class="alert-text"></p>
+        <dl class="stats">
+          <div><dt>Step</dt><dd id="st-step">0</dd></div>
+          <div><dt>Tokens</dt><dd id="st-tokens">0</dd></div>
+          <div><dt>Cost</dt><dd id="st-cost">$0</dd></div>
+          <div><dt>Model</dt><dd id="st-llm"></dd></div>
+        </dl>
+        <div class="actions">
+          <button id="pause">Pause run</button>
+          <button id="resume">Resume run</button>
+          <button id="cancel" class="danger">Cancel run</button>
         </div>
         <p id="run-error" class="error" hidden></p>
-      </div>
+      </section>
 
-      <div id="approval" class="card approval" hidden>
-        <h2>⚠️ Approval needed</h2>
-        <p>The agent wants to run a <b>production change</b>:</p>
-        <pre id="ap-call"></pre>
-        <p class="small"><b>Why:</b> <span id="ap-reason"></span></p>
-        <input id="ap-comment" placeholder="Comment (optional, the agent will read it)">
-        <div class="row">
-          <button id="approve" class="primary">✔ Approve</button>
-          <button id="reject" class="danger">✖ Reject</button>
+      <section id="approval" class="panel decision" hidden>
+        <h2>Your decision: the agent wants to change production</h2>
+        <pre id="ap-call" class="code"></pre>
+        <p class="reason"><b>Agent's reason:</b> <span id="ap-reason"></span></p>
+        <label for="ap-comment">Comment for the agent (optional)</label>
+        <input id="ap-comment" placeholder="For example: approved, roll back now">
+        <div class="actions">
+          <button id="approve" class="primary">Approve change</button>
+          <button id="reject" class="danger">Reject change</button>
         </div>
-      </div>
+      </section>
 
-      <div id="report" class="card report" hidden></div>
+      <section id="report" class="panel report" hidden></section>
 
-      <div class="grid">
-        <div class="card">
+      <div class="columns">
+        <section class="panel">
           <h2>Plan</h2>
-          <ol id="plan"></ol>
-        </div>
-        <div class="card">
-          <h2>Infrastructure (simulated)</h2>
-          <table id="infra"></table>
-        </div>
+          <ol id="plan" class="plan"></ol>
+        </section>
+        <section class="panel">
+          <h2>Services (simulated)</h2>
+          <table id="infra" class="infra"></table>
+        </section>
       </div>
 
-      <div class="card">
-        <h2>Talk to the agent</h2>
-        <div class="row">
-          <input id="guidance" placeholder="e.g. 'Prefer rollback over restart' — read at the next step">
-          <button id="send">Send</button>
+      <section class="panel">
+        <h2>Message the agent</h2>
+        <div class="inline">
+          <input id="guidance" aria-label="Message for the agent"
+                 placeholder="For example: prefer rollback over restart. Read at its next step.">
+          <button id="send">Send to agent</button>
         </div>
-      </div>
+      </section>
 
-      <div class="card">
-        <h2>Live trace <span class="muted small">(what the agent thinks and does, step by step)</span></h2>
-        <div id="timeline"></div>
-      </div>
+      <section class="panel">
+        <h2>Live trace</h2>
+        <p class="hint">Every step the agent takes: what it thought, which tools it called, and what came back.</p>
+        <div id="timeline" class="timeline"></div>
+      </section>
     </div>
   </section>
 </main>
