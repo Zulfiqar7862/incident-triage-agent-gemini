@@ -33,6 +33,7 @@ class Settings:
     tool_max_retries: int = field(default_factory=lambda: _i("TOOL_MAX_RETRIES", "3"))
     tool_backoff: float = field(default_factory=lambda: _f("TOOL_BACKOFF_SECONDS", "0.3"))
     min_confidence: float = field(default_factory=lambda: _f("MIN_CONFIDENCE", "0.6"))
+    stream_delay: float = field(default_factory=lambda: _f("STREAM_DELAY_SECONDS", "0.03"))  # pause per text chunk
 
     # Context budget (characters; ~4 chars per token)
     tool_output_chars: int = 1500      # each tool result is truncated to this

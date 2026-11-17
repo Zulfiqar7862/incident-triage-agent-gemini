@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from incident_triage_agent.agent.answer import build_answer
 from incident_triage_agent.agent.loop import Agent
 from incident_triage_agent.agent.runtime import ConflictError, Runtime
+from incident_triage_agent.agent.sources import summarize
 from incident_triage_agent.config import Settings
 from incident_triage_agent.db import DB, TERMINAL
 from incident_triage_agent.llm import LLM, make_llm
@@ -80,6 +81,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None) -> Fast
         run["steps"] = state.get("steps", [])
         run["notes"] = state.get("notes", [])
         run["answer"] = build_answer(run["status"], run["report"]).model_dump() if run["report"] else None
+        run.update(summarize(state, run["report"]))   # sources, done, not_done
         run["infra"] = {n: {"status": s["status"], "version": s["version"], "replicas": s["replicas"]}
                         for n, s in world.get("services", {}).items()}
         return run
@@ -126,12 +128,17 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None) -> Fast
 
     @app.get("/api/runs/{run_id}/stream")
     async def stream(run_id: str, after: int = 0):
-        """Server-Sent Events: pushes new trace events as they are written."""
+        """Server-Sent Events: live text deltas (`token`) and new trace events (`trace`) as they happen."""
         get_run_or_404(run_id)
+        tokens = runtime.agent.tokens
 
         async def gen():
-            last, idle = after, 0
+            last, seq, idle = after, 0, 0
             while True:
+                deltas = tokens.since(run_id, seq)   # deltas first: they always precede their final event
+                for d in deltas:
+                    seq = d["seq"]
+                    yield f"event: token\ndata: {json.dumps(d)}\n\n"
                 evs = db.events(run_id, last)
                 for e in evs:
                     last = e["id"]
@@ -139,11 +146,12 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None) -> Fast
                 run = db.get_run(run_id)
                 if run and run["status"] in TERMINAL and not evs:
                     idle += 1
-                    if idle > 3:
+                    if idle > 10:
                         yield "event: end\ndata: {}\n\n"
                         return
-                yield ": keep-alive\n\n" if not evs else ""
-                await asyncio.sleep(0.5)
+                if not evs and not deltas:
+                    yield ": keep-alive\n\n"
+                await asyncio.sleep(0.1)
 
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

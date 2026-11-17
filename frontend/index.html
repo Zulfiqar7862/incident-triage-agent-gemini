@@ -9,145 +9,114 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header class="topbar">
-  <h1>Incident Triage Agent</h1>
-  <span id="mode" class="mode">Connecting…</span>
-  <a href="/docs" target="_blank" rel="noopener">API docs</a>
-</header>
-<div id="banner" class="banner" hidden>
-  <p id="banner-text" class="error-box" role="alert"></p>
-  <button id="banner-retry">Retry now</button>
-</div>
+<aside class="sidebar">
+  <p class="brand">Incident Triage Agent</p>
+  <button id="new-run">New triage</button>
+  <h2>Runs</h2>
+  <ul id="runs" class="run-list"><li class="state">Loading runs…</li></ul>
+  <p class="side-foot"><span id="mode">Connecting…</span> <a href="/docs" target="_blank" rel="noopener">API docs</a></p>
+</aside>
 
-<main class="layout">
-  <aside class="sidebar">
-    <section class="panel">
-      <h2>Start a triage run</h2>
-      <label for="scenario">Incident</label>
-      <select id="scenario" disabled><option>Loading incidents…</option></select>
-      <p id="scenario-alert" class="hint"></p>
-      <button id="start" class="primary" disabled>Start triage</button>
-    </section>
-    <section class="panel">
-      <h2>Runs</h2>
-      <ul id="runs" class="run-list"><li class="state">Loading runs…</li></ul>
-    </section>
-    <section class="panel">
-      <h2>Past incidents the agent remembers</h2>
-      <ul id="memory" class="memory-list"><li class="state">Loading…</li></ul>
-    </section>
-  </aside>
+<main class="main">
+  <div id="banner" class="banner" hidden>
+    <p id="banner-text" class="error-box" role="alert"></p>
+    <button id="banner-retry">Retry now</button>
+  </div>
 
-  <section class="content">
-    <section id="empty" class="panel empty-main">
-      <h2>No run selected</h2>
-      <p>Pick an incident on the left and press <b>Start triage</b>, or open an earlier run from the list.
-        The agent investigates on its own and stops to ask you before it changes anything.</p>
+  <div class="thread">
+    <section id="empty" class="empty">
+      <h1>What is going wrong in production?</h1>
+      <p>Pick an incident below and press <b>Start triage</b>. The agent writes a plan, investigates with tools,
+        asks you before it changes anything, and answers with its sources.</p>
     </section>
 
-    <div id="run" hidden>
-      <section class="panel run-head">
-        <div class="run-title">
-          <h2 id="run-title"></h2>
-          <span id="run-status" class="status"></span>
-        </div>
-        <p id="run-alert" class="alert-text"></p>
+    <article id="run" hidden>
+      <header class="run-head">
+        <h1 id="run-title"></h1>
+        <span id="run-status" class="status"></span>
+        <span id="conn" class="conn" aria-live="polite"></span>
+      </header>
+      <div class="run-meta">
         <dl class="stats">
           <div><dt>Step</dt><dd id="st-step">0</dd></div>
           <div><dt>Tokens</dt><dd id="st-tokens">0</dd></div>
           <div><dt>Cost</dt><dd id="st-cost">$0</dd></div>
           <div><dt>Model</dt><dd id="st-llm"></dd></div>
-          <div><dt>Approvals</dt><dd id="st-approvals" aria-live="polite">None pending</dd></div>
         </dl>
-        <div class="actions">
-          <button id="pause">Pause run</button>
-          <button id="resume">Resume run</button>
-          <button id="cancel" class="danger">Cancel run</button>
+        <div class="controls">
+          <button id="pause">Pause</button>
+          <button id="resume">Resume</button>
+          <button id="cancel" class="danger">Cancel</button>
         </div>
-        <p id="run-error" class="error-box" role="alert" hidden></p>
-      </section>
+      </div>
+      <p id="run-error" class="error-box" role="alert" hidden></p>
 
-      <section class="panel">
+      <p id="query" class="bubble"></p>
+
+      <section class="block">
         <h2>Plan</h2>
         <ol id="plan" class="plan"></ol>
       </section>
 
-      <details id="thinking" class="panel thinking">
-        <summary>
-          <span class="th-dot" aria-hidden="true"></span>
-          <span id="th-title" class="th-title">Thinking…</span>
-          <span id="th-line" class="th-line"></span>
-        </summary>
-        <ol id="th-phases" class="th-phases" aria-label="Agent phase"></ol>
-        <div id="th-body" class="th-body"></div>
-      </details>
+      <section class="block">
+        <h2 id="th-title" class="th-title">Thinking…</h2>
+        <div id="thoughts" class="thoughts"></div>
+      </section>
 
-      <section id="approval" class="panel decision" aria-labelledby="ap-title" tabindex="-1" hidden>
-        <div class="ap-head">
-          <h2 id="ap-title"></h2>
-          <span class="risk">Needs your approval: changes production</span>
-        </div>
+      <section class="block">
+        <h2>Acting</h2>
+        <ul id="acts" class="acts"><li class="state">No tool calls yet.</li></ul>
 
-        <div class="ap-grid">
-          <div>
-            <h3>What will happen</h3>
-            <dl id="ap-fields" class="fields"></dl>
+        <section id="approval" class="decision" aria-labelledby="ap-title" tabindex="-1" hidden>
+          <div class="ap-head">
+            <h3 id="ap-title"></h3>
+            <span class="risk">Needs your approval: changes production</span>
           </div>
-          <div>
-            <h3>Why the agent chose this</h3>
-            <p id="ap-reason" class="ap-reason"></p>
-            <p id="ap-earlier" class="state"></p>
-            <div id="ap-confidence" class="confidence" hidden>
-              <span class="conf-label">Confidence <b id="ap-conf-value"></b></span>
-              <span class="meter" aria-hidden="true"><span id="ap-conf-bar"></span></span>
+          <div class="ap-grid">
+            <dl id="ap-fields" class="fields"></dl>
+            <div>
+              <p id="ap-reason" class="ap-reason"></p>
+              <div id="ap-confidence" class="confidence" hidden>
+                <span>Confidence <b id="ap-conf-value"></b></span>
+                <span class="meter" aria-hidden="true"><span id="ap-conf-bar"></span></span>
+              </div>
+              <ul id="ap-findings" class="findings"></ul>
             </div>
           </div>
-        </div>
-
-        <h3>Incident context</h3>
-        <p id="ap-incident" class="ap-incident"></p>
-        <ul id="ap-findings" class="findings"></ul>
-
-        <label for="ap-comment">Comment for the agent (optional)</label>
-        <input id="ap-comment" name="comment" autocomplete="off" placeholder="For example: approved, but watch the error rate for 10 minutes…">
-        <div class="actions">
-          <button id="approve" class="primary">Approve change</button>
-          <button id="reject" class="danger">Reject change</button>
-        </div>
-      </section>
-
-      <p id="ap-receipt" class="receipt" role="status" hidden></p>
-
-      <section id="answer" class="panel answer" hidden></section>
-
-      <section class="panel">
-        <h2>Services (simulated)</h2>
-        <table id="infra" class="infra"></table>
-      </section>
-
-      <section class="panel">
-        <h2>Message the agent</h2>
-        <div class="composer">
-          <textarea id="guidance" name="guidance" autocomplete="off" rows="2" aria-label="Message for the agent" aria-describedby="composer-hint"
-                    placeholder="For example: prefer rollback over restart…"></textarea>
-          <div class="composer-row">
-            <span id="composer-hint" class="hint">Enter sends, Shift+Enter adds a line. The agent reads it at its next step.</span>
-            <button id="send">Send to agent</button>
+          <label for="ap-comment">Comment for the agent (optional)</label>
+          <input id="ap-comment" name="comment" autocomplete="off" placeholder="For example: approved, but watch the error rate…">
+          <div class="actions">
+            <button id="approve" class="primary">Approve change</button>
+            <button id="reject" class="danger">Reject change</button>
           </div>
-        </div>
+        </section>
+        <p id="ap-receipt" class="receipt" role="status" hidden></p>
       </section>
 
-      <section class="panel">
-        <div class="section-head">
-          <h2>Live trace</h2>
-          <span id="conn" class="conn" aria-live="polite">Connecting…</span>
-        </div>
-        <p class="hint">Every step the agent takes: what it thought, which tools it called, and what came back.</p>
-        <p id="trace-empty" class="state">Waiting for the first event…</p>
-        <div id="timeline" class="timeline"></div>
+      <section id="result" class="block" hidden>
+        <h2>Result</h2>
+        <div id="answer" class="answer"></div>
       </section>
+
+      <section id="sources-block" class="block" hidden>
+        <h2>Sources</h2>
+        <ol id="sources" class="sources"></ol>
+        <div class="outcome">
+          <div><h3>Done</h3><ul id="done"></ul></div>
+          <div><h3>Not done</h3><ul id="not-done"></ul></div>
+        </div>
+      </section>
+    </article>
+  </div>
+
+  <div class="composer">
+    <textarea id="composer" name="message" autocomplete="off" rows="2" aria-label="Message"></textarea>
+    <div class="composer-row">
+      <select id="scenario" aria-label="Incident" disabled><option>Loading incidents…</option></select>
+      <span id="composer-hint" class="hint"></span>
+      <button id="send" class="primary" disabled>Start triage</button>
     </div>
-  </section>
+  </div>
 </main>
 <script src="/static/app.js"></script>
 </body>

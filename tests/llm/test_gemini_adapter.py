@@ -31,12 +31,12 @@ class FakeModels:
     def __init__(self, failures):
         self.failures, self.calls, self.kw = failures, 0, None
 
-    def generate_content(self, **kw):
+    def generate_content_stream(self, **kw):
         self.calls += 1
         self.kw = kw
         if self.calls <= self.failures:
             raise RuntimeError("429 RESOURCE_EXHAUSTED")
-        return fake_response()
+        return iter([fake_response()])
 
 
 def test_gemini_retries_transient_errors_then_succeeds():

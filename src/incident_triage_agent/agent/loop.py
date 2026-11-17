@@ -15,6 +15,7 @@ can die at any moment and the run continues from the last checkpoint.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 
 from incident_triage_agent.agent import guards
@@ -24,9 +25,10 @@ from incident_triage_agent.agent.executor import Executor
 from incident_triage_agent.agent.planner import Planner
 from incident_triage_agent.agent.safety import redact
 from incident_triage_agent.agent.state import Checkpointer, RunState, cost_usd
+from incident_triage_agent.agent.tokens import TokenStream
 from incident_triage_agent.config import Settings
 from incident_triage_agent.db import DB
-from incident_triage_agent.llm.base import LLM, LLMDecision, LLMError, ToolCall
+from incident_triage_agent.llm.base import LLM, LLMDecision, LLMError, ToolCall, chunks
 from incident_triage_agent.tools.registry import ToolRegistry
 
 CONTINUE, STOP = "continue", "stop"
@@ -41,10 +43,22 @@ class Agent:
         self.executor = Executor(registry, settings, sleep)
         self.gate = ApprovalGate(db)
         self.checkpoints = Checkpointer(db, settings)
+        self.tokens = TokenStream()        # live text deltas for the UI (memory only)
+        self.sleep = sleep or time.sleep
 
     # ------------------------------------------------------------------ helpers
     def _event(self, run_id: str, step: int, type_: str, **data) -> None:
         self.db.add_event(run_id, step, type_, data)
+
+    def _delta(self, run_id: str, step: int, kind: str, text: str) -> None:
+        """Publish one piece of streaming text, paced so the operator can follow it."""
+        self.tokens.publish(run_id, step, kind, text)
+        if self.s.stream_delay:
+            self.sleep(self.s.stream_delay)
+
+    def _stream(self, run_id: str, step: int, kind: str, text: str) -> None:
+        for piece in chunks(text):
+            self._delta(run_id, step, kind, piece)
 
     def _guidance(self, run_id: str) -> list[str]:
         return [e["data"]["message"] for e in self.db.events(run_id) if e["type"] == "guidance"]
@@ -73,8 +87,10 @@ class Agent:
                 self.db.add_memory(svc, redact(rs.run["alert"])[:300], redact(str(report["root_cause"]))[:400],
                                    redact("; ".join(report.get("actions_taken") or ["none"]))[:300], rs.run_id)
             self._event(rs.run_id, rs.step, "memory_saved", services=report.get("affected_services") or [])
-        # the final answer is always the last event of a finished run
-        self._event(rs.run_id, rs.step, "answer", **build_answer(status, report).model_dump())
+        # the final answer is always the last event of a finished run; its diagnosis streams first
+        answer = build_answer(status, report)
+        self._stream(rs.run_id, rs.step, "answer", answer.diagnosis)
+        self._event(rs.run_id, rs.step, "answer", **answer.model_dump())
         return STOP
 
     # ------------------------------------------------------------------ 0) approvals
@@ -115,7 +131,8 @@ class Agent:
 
         # 2) plan: build context and ask the model
         try:
-            decision, layers, memories = self.planner.next_decision(rs, self._guidance(run_id))
+            decision, layers, memories = self.planner.next_decision(
+                rs, self._guidance(run_id), lambda text: self._delta(run_id, rs.step + 1, "thought", text))
         except LLMError as e:
             self._event(run_id, rs.step, "error", message=str(e))
             self.db.set_status(run_id, "failed", ("running",), error=str(e))
@@ -173,6 +190,7 @@ class Agent:
         if call.name == "update_plan":
             kind = "plan_revised" if rs.plan else "plan"
             rs.plan = [str(x) for x in (call.args.get("steps") or [])][:MAX_PLAN_ITEMS]
+            self._stream(rs.run_id, rs.step, "plan", "\n".join(rs.plan))
             step_rec["calls"].append({"tool": call.name, "args": call.args, "ok": True,
                                       "summary": f"plan with {len(rs.plan)} steps", "attempts": 1, "latency_ms": 0})
             self._event(rs.run_id, rs.step, kind, steps=rs.plan)

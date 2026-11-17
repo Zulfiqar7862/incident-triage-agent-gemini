@@ -13,7 +13,7 @@ from incident_triage_agent.tools.infra_tools import build_registry
 
 
 def make_settings(db_path: str, **kw) -> Settings:
-    base = dict(gemini_api_key="", db_path=db_path, step_delay=0, tool_backoff=0)
+    base = dict(gemini_api_key="", db_path=db_path, step_delay=0, tool_backoff=0, stream_delay=0)
     base.update(kw)
     return Settings(**base)
 
@@ -31,7 +31,7 @@ class ScriptedLLM:
     def __init__(self, script):
         self.script, self.i = script, 0
 
-    def decide(self, system, prompt, tools, state):
+    def decide(self, system, prompt, tools, state, on_text=None):
         if callable(self.script):
             d = self.script(state)
         else:

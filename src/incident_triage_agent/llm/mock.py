@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import time
 
-from incident_triage_agent.llm.base import LLMDecision, ToolCall
+from incident_triage_agent.llm.base import LLMDecision, OnText, ToolCall, chunks
 
 PLAN = [
     "List services and find which ones are unhealthy",
@@ -46,9 +46,12 @@ class MockLLM:
     name = "mock"
     model = "mock-policy-v1"
 
-    def decide(self, system: str, prompt: str, tools: list[dict], state: dict) -> LLMDecision:
+    def decide(self, system: str, prompt: str, tools: list[dict], state: dict,
+               on_text: OnText | None = None) -> LLMDecision:
         started = time.perf_counter()
         thought, calls = self._policy(state)
+        for piece in chunks(thought) if on_text else []:   # stream like a real model, deterministically
+            on_text(piece)
         out = json.dumps({"thought": thought, "calls": [c.__dict__ for c in calls]})
         return LLMDecision(thought=thought, calls=calls, tokens_in=len(system + prompt) // 4,
                            tokens_out=len(out) // 4, latency_ms=int((time.perf_counter() - started) * 1000),

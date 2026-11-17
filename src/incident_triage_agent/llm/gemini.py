@@ -10,8 +10,9 @@ from __future__ import annotations
 import os
 import re
 import time
+from types import SimpleNamespace
 
-from incident_triage_agent.llm.base import LLMDecision, LLMError, ToolCall
+from incident_triage_agent.llm.base import LLMDecision, LLMError, OnText, ToolCall
 
 
 def to_function_declarations(tools: list[dict]):
@@ -40,6 +41,22 @@ def parse_response(resp, model: str, latency_ms: int) -> LLMDecision:
                        latency_ms=latency_ms, model=model)
 
 
+def collect_stream(stream, on_text: OnText | None):
+    """Forward text parts as they arrive and merge all chunks into one response for parse_response.
+    Function calls arrive whole inside a chunk, so they are handled exactly as without streaming."""
+    parts, usage = [], None
+    for chunk in stream:
+        cands = getattr(chunk, "candidates", None) or []
+        for part in (cands[0].content.parts or []) if cands and getattr(cands[0], "content", None) else []:
+            parts.append(part)
+            if on_text and getattr(part, "text", None):
+                on_text(part.text)
+        usage = getattr(chunk, "usage_metadata", None) or usage
+    if not parts:
+        return SimpleNamespace(candidates=[], prompt_feedback="empty stream", usage_metadata=usage)
+    return SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=parts))], usage_metadata=usage)
+
+
 def retry_delay(err: Exception, attempt: int, backoff: float, cap: float = 60.0) -> float:
     """Honour the server's hint on 429 ("Please retry in 47.7s" / retryDelay '47s'), else exponential backoff."""
     m = re.search(r"retry in ([0-9.]+)s|retryDelay'?:? *'?([0-9.]+)s", str(err))
@@ -62,7 +79,8 @@ class GeminiLLM:
             client = genai.Client(api_key=api_key, http_options=types.HttpOptions(api_version=api_version))
         self.client = client
 
-    def decide(self, system: str, prompt: str, tools: list[dict], state: dict) -> LLMDecision:
+    def decide(self, system: str, prompt: str, tools: list[dict], state: dict,
+               on_text: OnText | None = None) -> LLMDecision:
         from google.genai import types
         config = types.GenerateContentConfig(
             system_instruction=system,
@@ -75,7 +93,8 @@ class GeminiLLM:
         for attempt in range(1, self.max_retries + 1):
             started = time.perf_counter()
             try:
-                resp = self.client.models.generate_content(model=self.model, contents=prompt, config=config)
+                stream = self.client.models.generate_content_stream(model=self.model, contents=prompt, config=config)
+                resp = collect_stream(stream, on_text)
                 return parse_response(resp, self.model, int((time.perf_counter() - started) * 1000))
             except LLMError:
                 raise

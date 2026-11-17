@@ -24,9 +24,9 @@ def test_model_is_offered_only_update_plan_until_a_plan_exists(db_path):
     offered = []
 
     class Recording(MockLLM):
-        def decide(self, system, prompt, tools, state):
+        def decide(self, system, prompt, tools, state, on_text=None):
             offered.append([t["name"] for t in tools])
-            return super().decide(system, prompt, tools, state)
+            return super().decide(system, prompt, tools, state, on_text)
 
     rt, _ = make_runtime(db_path, llm=Recording())
     rt.wait(rt.start_run("bad-deploy")["id"])

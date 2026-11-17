@@ -12,7 +12,7 @@ from incident_triage_agent.agent.prompts import SYSTEM_PROMPT
 from incident_triage_agent.agent.state import RunState
 from incident_triage_agent.config import Settings
 from incident_triage_agent.db import DB
-from incident_triage_agent.llm.base import LLM, LLMDecision
+from incident_triage_agent.llm.base import LLM, LLMDecision, OnText
 from incident_triage_agent.tools.registry import ToolRegistry
 
 
@@ -30,7 +30,8 @@ class Planner:
                     services += [r["service"] for r in c["data"] if r["status"] != "healthy"]
         return sorted(set(services))
 
-    def next_decision(self, rs: RunState, guidance: list[str]) -> tuple[LLMDecision, dict, list]:
+    def next_decision(self, rs: RunState, guidance: list[str],
+                      on_text: OnText | None = None) -> tuple[LLMDecision, dict, list]:
         """Return (decision, context layer sizes, memories used)."""
         memories = self.db.search_memory(self.services_in_scope(rs))
         prompt, layers = build_context(rs.run, rs.state, rs.plan, guidance, memories, self.s)
@@ -38,5 +39,5 @@ class Planner:
         if not rs.plan:   # plan first: until a plan exists the model is offered only update_plan
             tools = [t for t in tools if t["name"] == "update_plan"]
         decision = self.llm.decide(SYSTEM_PROMPT, prompt, tools,
-                                   {**rs.state, "plan": rs.plan, "guidance": guidance})
+                                   {**rs.state, "plan": rs.plan, "guidance": guidance}, on_text)
         return decision, layers, memories
