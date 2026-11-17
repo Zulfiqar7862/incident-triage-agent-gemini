@@ -4,11 +4,43 @@ const $ = (id) => document.getElementById(id);
 let current = null, es = null, lastEventId = 0, pollTimer = null;
 
 async function api(path, opts = {}) {
-  const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  let r;
+  try {
+    r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  } catch {
+    throw new Error("Can't reach the server. Check that it is running (make quickstart).");
+  }
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) { alert(body.detail || r.statusText); throw new Error(body.detail); }
+  if (!r.ok) throw new Error(body.detail || `${r.status} ${r.statusText}`);
   return body;
 }
+
+// Error banner: background polling errors clear themselves once the server answers again;
+// errors from a button press stay until the next action or Retry.
+let bannerKind = null;
+function showError(msg, kind = "action") {
+  bannerKind = kind;
+  $("banner-text").innerHTML = `<b>${kind === "conn" ? "Connection problem." : "That didn't work."}</b> ${esc(msg)}`;
+  $("banner").hidden = false;
+}
+function clearError(kind) {
+  if (!kind || bannerKind === kind) { $("banner").hidden = true; bannerKind = null; }
+}
+// Run a button's action with a loading state; failures go to the banner.
+async function act(btn, busyText, fn) {
+  const text = btn.textContent;
+  btn.disabled = true; btn.setAttribute("aria-busy", "true"); btn.textContent = busyText;
+  try { clearError(); await fn(); } catch (err) { showError(err.message); } finally {
+    btn.removeAttribute("aria-busy"); btn.textContent = text; btn.disabled = false;
+    if (current) refresh();
+  }
+}
+const poll = (fn) => async () => {
+  try { await fn(); clearError("conn"); } catch (err) {
+    showError(`${err.message} Retrying automatically.`, "conn");
+    if (es && es.readyState !== EventSource.CLOSED) setConn("lost", "Disconnected. Reconnecting…");
+  }
+};
 const post = (path, data) => api(path, { method: "POST", body: JSON.stringify(data || {}) });
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const label = (status) => status.replace("_", " ");
@@ -17,46 +49,60 @@ const time = (ts) => new Date(ts * 1000).toLocaleTimeString();
 const call = (tool, args) => `<code>${esc(tool)}(${esc(JSON.stringify(args))})</code>`;
 
 async function init() {
-  const h = await api("/health");
+  $("banner-retry").onclick = () => { clearError(); poll(loadRuns)(); poll(refresh)(); };
+  let h;
+  try { h = await api("/health"); } catch (err) {
+    $("mode").textContent = "Server unreachable";
+    showError(`${err.message} Then press Retry now or reload the page.`, "conn");
+    $("banner-retry").onclick = () => location.reload();
+    return;
+  }
   $("mode").textContent = h.llm_mode === "gemini" ? `Live model: ${h.model}` : "Offline demo mode (no API key)";
   const scenarios = await api("/api/scenarios");
   $("scenario").innerHTML = scenarios.map((s) => `<option value="${s.id}">${esc(s.title)}</option>`).join("");
+  $("scenario").disabled = false;
+  $("start").disabled = false;
   const showAlert = () => { $("scenario-alert").textContent = scenarios.find((s) => s.id === $("scenario").value).alert; };
   $("scenario").onchange = showAlert;
   showAlert();
-  $("start").onclick = async () => { const r = await post("/api/runs", { scenario: $("scenario").value }); select(r.id); };
-  $("pause").onclick = () => post(`/api/runs/${current}/pause`).then(refresh);
-  $("resume").onclick = () => post(`/api/runs/${current}/resume`).then(refresh);
-  $("cancel").onclick = () => confirm("Cancel this run?") && post(`/api/runs/${current}/cancel`).then(refresh);
-  $("approve").onclick = () => decide("approve");
-  $("reject").onclick = () => decide("reject");
-  $("send").onclick = async () => {
+  $("start").onclick = () => act($("start"), "Starting…", async () => {
+    const r = await post("/api/runs", { scenario: $("scenario").value });
+    select(r.id);
+  });
+  $("pause").onclick = () => act($("pause"), "Pausing…", () => post(`/api/runs/${current}/pause`));
+  $("resume").onclick = () => act($("resume"), "Resuming…", () => post(`/api/runs/${current}/resume`));
+  $("cancel").onclick = () => confirm("Cancel this run?")
+    && act($("cancel"), "Cancelling…", () => post(`/api/runs/${current}/cancel`));
+  $("approve").onclick = () => act($("approve"), "Approving…", () => decide("approve"));
+  $("reject").onclick = () => act($("reject"), "Rejecting…", () => decide("reject"));
+  $("send").onclick = () => {
     const m = $("guidance").value.trim();
     if (!m) return;
-    await post(`/api/runs/${current}/guidance`, { message: m });
-    $("guidance").value = "";
+    act($("send"), "Sending…", async () => {
+      await post(`/api/runs/${current}/guidance`, { message: m });
+      $("guidance").value = "";
+    });
   };
-  await loadRuns();
+  await poll(loadRuns)();
   const fromUrl = new URLSearchParams(location.search).get("run");
   if (fromUrl) select(fromUrl);
-  setInterval(loadRuns, 3000);
+  setInterval(poll(loadRuns), 3000);
 }
 
 async function decide(d) {
   await post(`/api/runs/${current}/approval`, { decision: d, comment: $("ap-comment").value });
   $("ap-comment").value = "";
-  refresh();
 }
 
 async function loadRuns() {
   const runs = await api("/api/runs");
   $("runs").innerHTML = runs.map((r) => `<li data-id="${r.id}" class="${r.id === current ? "active" : ""}">
       <span>${esc(r.title)}<br><span class="sub">Started ${time(r.created_at)}</span></span>
-      ${statusPill(r.status)}</li>`).join("") || '<li class="sub">No runs yet. Start one above.</li>';
+      ${statusPill(r.status)}</li>`).join("") || '<li class="state">No runs yet. Pick an incident above and press Start triage.</li>';
   document.querySelectorAll("#runs li[data-id]").forEach((li) => (li.onclick = () => select(li.dataset.id)));
   const mem = await api("/api/memory");
   $("memory").innerHTML = mem.map((m) => `<li><b>${esc(m.service)}</b>: ${esc(m.root_cause)}</li>`).join("")
-    || "<li>Nothing yet. Each resolved incident is remembered here and used in later runs.</li>";
+    || '<li class="state">Nothing yet. Each resolved incident is remembered here and used in later runs.</li>';
 }
 
 function select(id) {
@@ -66,18 +112,37 @@ function select(id) {
   $("empty").hidden = true;
   $("run").hidden = false;
   $("timeline").innerHTML = "";
+  $("trace-empty").hidden = false;
   think.reset();
   if (es) es.close();
+  setConn("", "Connecting…");
   es = new EventSource(`/api/runs/${id}/stream`);
+  es.onopen = () => setConn("live", "Live");
+  // EventSource reconnects by itself; events already shown are skipped by id
+  es.onerror = () => setConn("lost", es.readyState === EventSource.CLOSED ? "Disconnected. Reload to reconnect."
+    : "Disconnected. Reconnecting…");
   es.addEventListener("trace", (m) => {
     const e = JSON.parse(m.data);
     if (e.id > lastEventId) { lastEventId = e.id; addEvent(e); think.add(e); refresh(); }
   });
-  es.addEventListener("end", () => es.close());
+  es.addEventListener("end", () => { es.close(); setConn("", "Trace complete"); });
   clearInterval(pollTimer);
-  pollTimer = setInterval(refresh, 1500);
-  refresh();
-  loadRuns();
+  pollTimer = setInterval(poll(refresh), 1500);
+  poll(refresh)();
+  poll(loadRuns)();
+}
+
+// Provider errors can carry a long JSON dump: show the first sentence, keep the rest one click away.
+function errorHtml(error) {
+  const cut = error.search(/\s[{[]/);
+  const short = cut > 0 ? error.slice(0, cut).replace(/[.\s]+$/, "") : error;
+  return `<b>The run stopped.</b> ${esc(short)}. Press <b>Resume run</b> to continue from the last checkpoint.`
+    + (cut > 0 ? `<details><summary>Show full error</summary><pre>${esc(error)}</pre></details>` : "");
+}
+
+function setConn(kind, text) {
+  $("conn").className = `conn ${kind}`;
+  $("conn").textContent = text;
 }
 
 async function refresh() {
@@ -96,16 +161,16 @@ async function refresh() {
   $("resume").disabled = !["paused", "failed"].includes(r.status);
   $("cancel").disabled = ["completed", "escalated", "cancelled"].includes(r.status);
   $("run-error").hidden = !r.error;
-  $("run-error").textContent = r.error ? `The run stopped: ${r.error}. Press Resume run to continue from the last checkpoint.` : "";
-  $("plan").innerHTML = (r.plan || []).map((p) => `<li>${esc(p)}</li>`).join("") || '<li class="sub">The agent writes its plan in the first step.</li>';
+  $("run-error").innerHTML = r.error ? errorHtml(r.error) : "";
+  const waiting = (r.approvals || []).filter((a) => a.status === "pending").length;
+  $("st-approvals").textContent = waiting ? `${waiting} waiting for you` : "None pending";
+  $("st-approvals").classList.toggle("waiting", waiting > 0);
+  $("plan").innerHTML = (r.plan || []).map((p) => `<li>${esc(p)}</li>`).join("") || '<li class="state">The agent writes its plan in the first step.</li>';
   $("infra").innerHTML = Object.entries(r.infra).map(([n, s]) =>
     `<tr><td><b>${esc(n)}</b></td><td>${statusPill(s.status)}</td><td>${esc(s.version)}</td><td>${s.replicas} pods</td></tr>`).join("");
   const ap = r.status === "waiting_approval" ? r.pending_approval : null;
   $("approval").hidden = !ap;
-  if (ap) {
-    $("ap-call").textContent = `${ap.tool}(${JSON.stringify(ap.args, null, 1)})`;
-    $("ap-reason").textContent = ap.reason || "";
-  }
+  if (ap) renderApproval(ap, r);
   const rep = r.report;
   $("report").hidden = !rep;
   if (rep) {
@@ -117,6 +182,77 @@ async function refresh() {
       <p><b>Actions taken:</b> ${esc((rep.actions_taken || []).join("; ") || "none")}</p>
       <p><b>Follow-ups:</b></p><ul>${(rep.follow_ups || []).map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Approval card: a plain-language review of the proposed change, built only from
+// data the run already has (pending approval, steps, tool summaries).
+const ACTIONS = {
+  restart_service: {
+    title: (a) => `Restart service ${a.service}`,
+    effect: "All pods of the service are recycled. Requests in flight may fail briefly.",
+  },
+  rollback_deployment: {
+    title: (a, r) => {
+      const from = r.infra?.[a.service]?.version;
+      return `Roll back ${a.service}${from ? ` from ${from}` : ""} to ${a.to_version}`;
+    },
+    effect: "The service is redeployed on the earlier version. Changes in the newer release are undone.",
+  },
+  scale_service: {
+    title: (a, r) => {
+      const from = r.infra?.[a.service]?.replicas;
+      return `Scale ${a.service}${from ? ` from ${from}` : ""} to ${a.replicas} replicas`;
+    },
+    effect: "Pods are added or removed. Cost changes with the number of replicas.",
+  },
+};
+const FIELDS = {
+  service: ["Service", "The service this change applies to"],
+  to_version: ["Target version", "The version the service runs after the rollback"],
+  replicas: ["Replicas", "How many pods the service runs after the change"],
+};
+// "top runbooks: ['a', 'b']" -> "top runbooks: a, b"
+const plainList = (text) => String(text).replace(/\[([^\]]*)\]/g, (_, inner) => inner.replace(/['"]/g, ""));
+const humanize = (key) => key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+const humanValue = (v) => (typeof v === "object" ? Object.entries(v).map(([k, x]) => `${humanize(k)}: ${x}`).join(", ") : String(v));
+// model text sometimes embeds the raw call ("Proposing rollback_deployment {...}"); the card shows it as fields instead
+const plainReason = (text) => (text || "")
+  .replace(/Proposing \w+ \{[^}]*\}\s*-\s*this changes production so it needs approval\.?/g,
+    "It proposes the change on the left. That changes production, so it needs your approval.")
+  .replace(/Proposing \w+ \{[^}]*\}/g, "It proposes the change on the left")
+  .replace(/\s+/g, " ").trim();
+
+function renderApproval(ap, r) {
+  const action = ACTIONS[ap.tool];
+  $("ap-title").textContent = action ? action.title(ap.args, r) : `Run ${humanize(ap.tool).toLowerCase()}`;
+  const rows = Object.entries(ap.args).map(([k, v]) => {
+    const [name, help] = FIELDS[k] || [humanize(k), ""];
+    return `<div><dt>${esc(name)}</dt><dd>${esc(humanValue(v))}${help ? `<span>${esc(help)}</span>` : ""}</dd></div>`;
+  });
+  if (action) rows.push(`<div><dt>Effect</dt><dd>${esc(action.effect)}</dd></div>`);
+  $("ap-fields").innerHTML = rows.join("");
+
+  const steps = r.steps || [];
+  const earlier = steps.filter((s) => s.n < ap.step && s.thought).slice(-1)[0];
+  $("ap-reason").textContent = plainReason(ap.reason) || "The agent gave no reason.";
+  $("ap-earlier").textContent = earlier ? `Before that: ${plainReason(earlier.thought)}` : "";
+
+  const texts = [ap.reason, ...steps.map((s) => s.thought)].filter(Boolean).reverse();
+  const m = texts.map((t) => t.match(/confidence[^0-9]{0,12}(\d+(?:\.\d+)?)\s*(%)?/i)).find(Boolean);
+  const pct = m ? Math.round(m[2] || parseFloat(m[1]) > 1 ? parseFloat(m[1]) : parseFloat(m[1]) * 100) : null;
+  $("ap-confidence").hidden = pct === null || pct > 100;
+  if (pct !== null) { $("ap-conf-value").textContent = `${pct}%`; $("ap-conf-bar").style.width = `${pct}%`; }
+
+  $("ap-incident").textContent = `${r.title}. ${r.alert}`;
+  const latest = new Map();
+  for (const s of steps) for (const c of s.calls || []) {
+    if (c.ok && !c.risky && !["list_services", "update_plan", "finish_triage"].includes(c.tool)) latest.set(c.tool, c.summary);
+  }
+  const FINDING = { get_metrics: "Metrics", get_logs: "Logs", get_recent_deployments: "Latest deploy", search_runbooks: "Runbook" };
+  $("ap-findings").innerHTML = [...latest].slice(-4).map(([tool, summary]) =>
+    `<li><b>${esc(FINDING[tool] || humanize(tool))}:</b> ${esc(plainList(summary))}</li>`).join("")
+    || '<li class="state">No findings recorded yet.</li>';
 }
 
 // Each trace event becomes [kind label | details].
@@ -150,6 +286,7 @@ function addEvent(e) {
   div.className = `ev ev-${e.type}${e.data.ok === false ? " ev-fail" : ""}`;
   div.innerHTML = `<div class="ev-kind">${kind}<span class="ev-when">Step ${e.step}, ${time(e.ts)}</span></div><div class="ev-body">${html}</div>`;
   $("timeline").appendChild(div);
+  $("trace-empty").hidden = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +311,10 @@ const think = {
   line() {
     const last = [...this.events].reverse().find((e) => ["thought", "tool_call", "approval_requested", "run_finished"].includes(e.type));
     if (!last) return "Reading the alert";
+    const newest = this.events[this.events.length - 1];
+    const waitsOnModel = ["run_created", "plan", "plan_revised", "tool_result", "approval_decided", "guidance", "status",
+      "resumed_after_restart", "warning", "retry"];
+    if (this.status === "running" && newest && waitsOnModel.includes(newest.type)) return "Waiting on the model…";
     if (last.type === "tool_call") return `Calling ${last.data.tool}`;
     if (last.type === "approval_requested") return `Waiting for your decision on ${last.data.tool}`;
     if (last.type === "run_finished") return `Concluded: ${last.data.report.root_cause}`;
@@ -190,8 +331,10 @@ const think = {
     if (this.wasLive && !live) panel.open = false;     // collapse when the agent stops to wait or finishes
     this.wasLive = live;
     $("th-title").textContent = live ? "Thinking…"
-      : `Thought for ${this.seconds()}s · ${this.step} step${this.step === 1 ? "" : "s"}`;
-    $("th-line").textContent = live ? this.line() : (this.status === "waiting_approval" ? "Waiting for your decision" : label(this.status));
+      : `Thought for ${this.seconds()}s over ${this.step} step${this.step === 1 ? "" : "s"}`;
+    const idle = { waiting_approval: "Waiting for your decision", failed: "Stopped with an error", paused: "Paused by you",
+      cancelled: "Cancelled", completed: "Finished: fix applied", escalated: "Finished: handed to a human" };
+    $("th-line").textContent = live ? this.line() : (idle[this.status] || label(this.status));
     const p = this.phase();
     $("th-phases").innerHTML = PHASES.map((name, i) =>
       `<li class="${i < p ? "done" : i === p ? (live ? "now" : "done") : ""}">${name}</li>`).join("");

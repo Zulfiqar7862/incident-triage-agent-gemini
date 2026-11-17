@@ -13,28 +13,36 @@
   <span id="mode" class="mode">Connecting…</span>
   <a href="/docs" target="_blank" rel="noopener">API docs</a>
 </header>
+<div id="banner" class="banner" hidden>
+  <p id="banner-text" class="error-box" role="alert"></p>
+  <button id="banner-retry">Retry now</button>
+</div>
 
 <main class="layout">
   <aside class="sidebar">
     <section class="panel">
       <h2>Start a triage run</h2>
       <label for="scenario">Incident</label>
-      <select id="scenario"></select>
+      <select id="scenario" disabled><option>Loading incidents…</option></select>
       <p id="scenario-alert" class="hint"></p>
-      <button id="start" class="primary">Start triage</button>
+      <button id="start" class="primary" disabled>Start triage</button>
     </section>
     <section class="panel">
       <h2>Runs</h2>
-      <ul id="runs" class="run-list"></ul>
+      <ul id="runs" class="run-list"><li class="state">Loading runs…</li></ul>
     </section>
     <section class="panel">
       <h2>Past incidents the agent remembers</h2>
-      <ul id="memory" class="memory-list"></ul>
+      <ul id="memory" class="memory-list"><li class="state">Loading…</li></ul>
     </section>
   </aside>
 
   <section class="content">
-    <div id="empty" class="panel empty">Pick an incident and press <b>Start triage</b>, or open a run from the list.</div>
+    <section id="empty" class="panel empty-main">
+      <h2>No run selected</h2>
+      <p>Pick an incident on the left and press <b>Start triage</b>, or open an earlier run from the list.
+        The agent investigates on its own and stops to ask you before it changes anything.</p>
+    </section>
 
     <div id="run" hidden>
       <section class="panel run-head">
@@ -48,13 +56,14 @@
           <div><dt>Tokens</dt><dd id="st-tokens">0</dd></div>
           <div><dt>Cost</dt><dd id="st-cost">$0</dd></div>
           <div><dt>Model</dt><dd id="st-llm"></dd></div>
+          <div><dt>Approvals</dt><dd id="st-approvals">None pending</dd></div>
         </dl>
         <div class="actions">
           <button id="pause">Pause run</button>
           <button id="resume">Resume run</button>
           <button id="cancel" class="danger">Cancel run</button>
         </div>
-        <p id="run-error" class="error" hidden></p>
+        <p id="run-error" class="error-box" role="alert" hidden></p>
       </section>
 
       <details id="thinking" class="panel thinking">
@@ -67,12 +76,35 @@
         <div id="th-body" class="th-body"></div>
       </details>
 
-      <section id="approval" class="panel decision" hidden>
-        <h2>Your decision: the agent wants to change production</h2>
-        <pre id="ap-call" class="code"></pre>
-        <p class="reason"><b>Agent's reason:</b> <span id="ap-reason"></span></p>
+      <section id="approval" class="panel decision" aria-labelledby="ap-title" hidden>
+        <div class="ap-head">
+          <p class="ap-eyebrow">The agent asks for your approval</p>
+          <span class="risk">Changes production</span>
+        </div>
+        <h2 id="ap-title"></h2>
+
+        <div class="ap-grid">
+          <div>
+            <h3>What will happen</h3>
+            <dl id="ap-fields" class="fields"></dl>
+          </div>
+          <div>
+            <h3>Why the agent chose this</h3>
+            <p id="ap-reason" class="ap-reason"></p>
+            <p id="ap-earlier" class="state"></p>
+            <div id="ap-confidence" class="confidence" hidden>
+              <span class="conf-label">Confidence <b id="ap-conf-value"></b></span>
+              <span class="meter" aria-hidden="true"><span id="ap-conf-bar"></span></span>
+            </div>
+          </div>
+        </div>
+
+        <h3>Incident context</h3>
+        <p id="ap-incident" class="ap-incident"></p>
+        <ul id="ap-findings" class="findings"></ul>
+
         <label for="ap-comment">Comment for the agent (optional)</label>
-        <input id="ap-comment" placeholder="For example: approved, roll back now">
+        <input id="ap-comment" placeholder="For example: approved, but watch the error rate for 10 minutes">
         <div class="actions">
           <button id="approve" class="primary">Approve change</button>
           <button id="reject" class="danger">Reject change</button>
@@ -102,8 +134,12 @@
       </section>
 
       <section class="panel">
-        <h2>Live trace</h2>
+        <div class="section-head">
+          <h2>Live trace</h2>
+          <span id="conn" class="conn">Connecting…</span>
+        </div>
         <p class="hint">Every step the agent takes: what it thought, which tools it called, and what came back.</p>
+        <p id="trace-empty" class="state">Waiting for the first event…</p>
         <div id="timeline" class="timeline"></div>
       </section>
     </div>
