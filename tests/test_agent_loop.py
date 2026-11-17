@@ -43,6 +43,7 @@ def test_low_confidence_routes_to_human(db_path):
     run = rt.wait(rt.start_run("ghost-alert")["id"])
     assert run["status"] == "escalated" and run["report"]["confidence"] < 0.6
     assert db.list_approvals(run["id"]) == []  # did not invent a fix
+    assert db.list_memory() == []              # unconfirmed runs are not promoted to long-term memory
 
 
 def test_prompt_injection_in_logs_is_flagged_and_cannot_bypass_gate(db_path):

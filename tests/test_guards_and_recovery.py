@@ -47,7 +47,9 @@ def test_self_correction_after_bad_arguments(db_path):
     run = rt.wait(rt.start_run("bad-deploy")["id"])
     calls = [c for s in run["state"]["steps"] for c in s["calls"]]
     assert calls[1]["ok"] is False and "Known services" in calls[1]["error"]
-    assert calls[2]["ok"] is True and run["status"] == "completed"
+    assert calls[2]["ok"] is True
+    # confident, but nothing was mitigated -> code routes it to a human
+    assert run["status"] == "escalated" and "no mitigation" in run["report"]["routing_reason"]
 
 
 def test_unknown_tool_and_no_tool_reply_are_handled(db_path):

@@ -64,9 +64,19 @@ class Agent:
                                            "follow_ups")}
         report["confidence"] = confidence
         report["actions_applied"] = state["world"].get("actions_applied", [])
-        # confidence-based routing: low confidence -> a human must take over
-        status = "completed" if confidence >= self.s.min_confidence else "escalated"
-        report["routed_to_human"] = status == "escalated"
+        # Routing rule (in code, not left to the model):
+        #   completed = a fix was applied (human-approved) AND the model is confident
+        #   escalated = low confidence, or nothing was mitigated -> a human must look
+        mitigated = bool(report["actions_applied"])
+        if confidence < self.s.min_confidence:
+            reason = f"confidence {confidence:.2f} below {self.s.min_confidence}"
+        elif not mitigated:
+            reason = "no mitigation was applied; a human should confirm and close"
+        else:
+            reason = ""
+        status = "escalated" if reason else "completed"
+        report["routed_to_human"] = bool(reason)
+        report["routing_reason"] = reason or "mitigated and verified with high confidence"
         self._checkpoint(run, state, plan, step, t_in, t_out)
         if not self.db.set_status(run["id"], status, ("running",), report=report):
             return STOP

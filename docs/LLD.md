@@ -154,8 +154,8 @@ stateDiagram-v2
     paused --> running: resume
     running --> failed: LLM unreachable / bug
     failed --> running: resume (from checkpoint)
-    running --> completed: finish_triage, confidence >= 0.6
-    running --> escalated: confidence < 0.6, step limit, token budget
+    running --> completed: finish_triage, fix applied and confidence >= 0.6
+    running --> escalated: low confidence, nothing mitigated, step limit, token budget
     pending --> cancelled
     running --> cancelled
     paused --> cancelled
@@ -189,7 +189,7 @@ decision = llm.decide(SYSTEM_PROMPT, prompt, tool_schemas, state)   # (3) model
 step += 1; add tokens/cost; events llm_call + thought
 if no tool calls: note "always call a tool"; checkpoint; CONTINUE
 for call in decision.calls:                          # (4) dispatch
-    finish_triage -> report; completed|escalated by confidence; promote memory; STOP
+    finish_triage -> report; completed (fix applied AND confidence>=0.6) else escalated; promote memory if completed; STOP
     update_plan   -> replace plan; event plan|plan_revised
     unknown tool  -> error observation
     risky         -> collect

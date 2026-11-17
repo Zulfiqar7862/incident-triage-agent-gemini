@@ -39,7 +39,8 @@ Put your key in `.env` (`GEMINI_API_KEY=...`) to use Gemini; leave it empty for 
 4. `search_runbooks` (small retrieval over `runbooks/*.md`, top-2 only).
 5. Proposes a fix, e.g. `rollback_deployment(payments-api, v2.3.9)` -> **run pauses, operator approves/rejects**.
 6. Verifies with fresh metrics, then `finish_triage` with a structured report and a **confidence** score.
-   Confidence < 0.6 -> status `escalated` (handed to a human) instead of `completed`.
+   It is `completed` only if a human-approved fix was applied **and** confidence >= 0.6; otherwise it is
+   `escalated` (handed to a human). This rule is in code, not left to the model.
 7. Confident, finished incidents are saved to **long-term memory** and recalled in later runs.
 
 Scenarios: `bad-deploy` (rollback), `memory-leak` (restart), `traffic-spike` (scale; its logs contain a
@@ -88,7 +89,7 @@ All curl commands for every endpoint: [docs/API.md](docs/API.md).
 | **Approval gate enforced in code** (`risky=True` tools) | Prompt injection can change what the model *asks* for, never what *runs*. |
 | **Approved action + checkpoint in one transaction** | An approved production change runs exactly once, even across a crash. |
 | **Context budget**: truncate tool output, compact old steps to 1-line summaries | Long runs stay coherent; nothing is silently dropped (every step keeps its summary). |
-| **Confidence-based routing** | Low confidence or "nothing found" goes to a human (`escalated`) instead of a confident wrong answer. |
+| **Confidence-based routing (in code)** | Low confidence or "nothing mitigated" goes to a human (`escalated`). Found by the live Gemini eval: on `ghost-alert` Gemini was *confident* nothing was wrong - correct, but a human should still close it. |
 | **Offline mock policy** | Deterministic tests/evals, demo without a key, and CI never calls a paid API. |
 | **Threads + SQLite status flags** for lifecycle | Simple. Pause/cancel are checked at step boundaries; conditional `UPDATE ... WHERE status=...` prevents races. |
 

@@ -16,7 +16,7 @@ its reasoning live, and **does not lose work** if the server restarts.
 | F5 | Resume after process restart from the last checkpoint | `db.save_checkpoint`, `Runtime.recover()` |
 | F6 | Operator sees plan, thoughts, tool calls, results, tokens, cost, latency live | events table + SSE + UI |
 | F7 | Operator can send guidance mid-run | `/guidance` API, context layer |
-| F8 | Structured final report + confidence-based routing to a human | `finish_triage`, `min_confidence` |
+| F8 | Structured final report + routing to a human when confidence < 0.6 or nothing was mitigated | `finish_triage`, `Agent._finish` |
 | F9 | Long-term memory of past incidents | `memory` table |
 
 ### Non-functional requirements

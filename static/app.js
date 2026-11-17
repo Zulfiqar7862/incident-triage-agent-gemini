@@ -84,9 +84,9 @@ async function refresh() {
   $("report").hidden = !rep;
   if (rep) {
     $("report").className = "card report " + r.status;
-    $("report").innerHTML = `<h2>${r.status === "escalated" ? "🙋 Handed to a human (low confidence)" : "✅ Incident report"}</h2>
+    $("report").innerHTML = `<h2>${r.status === "escalated" ? "🙋 Handed to a human" : "✅ Incident report"}</h2>
       <p><b>Root cause:</b> ${esc(rep.root_cause)}</p>
-      <p><b>Severity:</b> ${esc(rep.severity)} · <b>Confidence:</b> ${Math.round((rep.confidence || 0) * 100)}%</p>
+      <p class="small muted">Routing: ${esc(rep.routing_reason || "")}</p><p><b>Severity:</b> ${esc(rep.severity)} · <b>Confidence:</b> ${Math.round((rep.confidence || 0) * 100)}%</p>
       <p><b>Actions taken:</b> ${esc((rep.actions_taken || []).join("; ") || "none")}</p>
       <p><b>Follow-ups:</b></p><ul>${(rep.follow_ups || []).map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`;
   }
