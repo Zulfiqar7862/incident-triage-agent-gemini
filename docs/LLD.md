@@ -1,4 +1,4 @@
-# Low-Level Design (LLD) - Incident Triage Agent
+# Low-level design: Incident Triage Agent
 
 ## 1. Module map
 
@@ -24,6 +24,7 @@ classDiagram
       -_run_reads(rs, calls)
       -_request_approval(rs, risky_calls)
       -_finish(rs, report_args)
+      -_stream(run_id, step, kind, text)
     }
     class RunState {
       run; state; plan; step; tokens_in; tokens_out
@@ -54,7 +55,11 @@ classDiagram
     }
     class LLM {
       <<interface>>
-      +decide(system, prompt, tools, state) LLMDecision
+      +decide(system, prompt, tools, state, on_text) LLMDecision
+    }
+    class TokenStream {
+      +publish(run_id, step, kind, text)
+      +since(run_id, seq) list
     }
     class GeminiLLM
     class MockLLM
@@ -79,6 +84,7 @@ classDiagram
     Agent --> Executor
     Agent --> ApprovalGate
     Agent --> Checkpointer
+    Agent --> TokenStream
     Agent ..> guards
     Agent ..> RunState
     Planner --> LLM
@@ -95,7 +101,10 @@ classDiagram
 | `src/incident_triage_agent/config.py` | `Settings` dataclass (env + `.env` via python-dotenv). `llm_mode` = gemini if key else mock |
 | `src/incident_triage_agent/db.py` | `DB` class, schema, conditional status updates, transactions |
 | `src/incident_triage_agent/agent/runtime.py` | `Runtime` - lifecycle (start, pause, resume, cancel, decide, guidance), worker threads, `recover()` |
-| `src/incident_triage_agent/agent/loop.py` | `Agent.step()` - the thin step loop that calls the modules below |
+| `src/incident_triage_agent/agent/loop.py` | `Agent.step()` - the thin step loop that calls the modules below; `_finish()` builds the report, routes, saves memory and emits the answer |
+| `src/incident_triage_agent/agent/tokens.py` | `TokenStream` - in-memory, per-run buffer of text deltas (max 2,000 per run) |
+| `src/incident_triage_agent/agent/answer.py` | `Answer` (Pydantic) and `build_answer(status, report)` |
+| `src/incident_triage_agent/agent/sources.py` | `summarize(state, report)` -> `{sources, done, not_done}` |
 | `src/incident_triage_agent/agent/state.py` | `RunState` (typed view of a `runs` row), `Checkpointer.save()`, `cost_usd()` |
 | `src/incident_triage_agent/agent/planner.py` | `Planner.next_decision()` - memory recall + `build_context()` + `llm.decide()` |
 | `src/incident_triage_agent/agent/executor.py` | `Executor.run()` / `run_parallel()` - registry, validation, retry/backoff, injection flag |
@@ -104,8 +113,9 @@ classDiagram
 | `src/incident_triage_agent/agent/context.py` | `build_context()` -> `(prompt, layer_stats)` |
 | `src/incident_triage_agent/agent/prompts.py` | `SYSTEM_PROMPT` |
 | `src/incident_triage_agent/agent/safety.py` | `looks_like_injection()`, `redact()` |
-| `src/incident_triage_agent/llm/gemini.py` | `GeminiLLM`, `parse_response()`, `retry_delay()` |
-| `src/incident_triage_agent/llm/mock.py` | `MockLLM` rule-based policy |
+| `src/incident_triage_agent/llm/base.py` | `LLM` protocol, `LLMDecision`, `ToolCall`, `chunks()` (split text into word-sized deltas) |
+| `src/incident_triage_agent/llm/gemini.py` | `GeminiLLM`, `collect_stream()`, `parse_response()`, `retry_delay()` |
+| `src/incident_triage_agent/llm/mock.py` | `MockLLM` rule-based policy; streams its thought in 3-word chunks |
 | `src/incident_triage_agent/tools/registry.py` | `Tool`, `ToolRegistry`, `validate_args()`, `execute_with_retry()` |
 | `src/incident_triage_agent/tools/infra_tools.py` | tool functions + `build_registry()` |
 | `src/incident_triage_agent/sim/world.py` | `SCENARIOS`, `build_world()` |
@@ -182,8 +192,35 @@ erDiagram
 Guidance is stored only as `guidance` events (written by the API thread), so the worker never overwrites it.
 
 ### Event types
+Saved in `events` (payloads in [API.md](API.md#get-apirunsidstreamaftern-server-sent-events)):
 `run_created, status, plan, plan_revised, llm_call, thought, tool_call, tool_result, retry, warning,
-approval_requested, approval_decided, guidance, error, run_finished, memory_saved, resumed_after_restart`
+approval_requested, approval_decided, guidance, error, run_finished, memory_saved, answer, resumed_after_restart`.
+
+Not saved: `token` deltas `{seq, step, kind: plan|thought|answer, text}`, kept only in `TokenStream`.
+
+Order within a run: `run_created`, then for step 1 `llm_call`, `thought`, `plan` (the planner offers only
+`update_plan` until a plan exists); finished runs end with `run_finished`, `memory_saved` (if completed) and `answer`.
+
+### Streaming
+1. `Planner.next_decision()` passes `on_text` to `llm.decide()`. Gemini calls `generate_content_stream`;
+   `collect_stream()` forwards each text part to `on_text` and merges all parts into one response, so
+   `parse_response()` and function-call handling are unchanged. Function calls are never streamed partially.
+   The mock splits its thought with `chunks()`.
+2. `Agent._delta()` publishes each piece to `TokenStream` for step `rs.step + 1`, then sleeps `STREAM_DELAY_SECONDS`.
+3. The plan (joined with newlines) and the answer's diagnosis are streamed by `Agent._stream()` just before their
+   saved events.
+4. The SSE handler sends new deltas before new events on every 100 ms tick, so deltas always precede their event.
+   The UI shows deltas with a caret and replaces them with the saved text when the event arrives.
+5. Tests assert the deltas of each step and kind join to exactly the saved text.
+
+### Answer and sources
+- `build_answer()`: `diagnosis` = report root cause; `action_taken` = applied actions or "No change was made";
+  `outcome` = "Fixed and verified: ..." when completed, otherwise "Handed to a human: <routing reason>";
+  `confidence` from the report.
+- `summarize()`: every successful read of list_services, get_metrics, get_logs, get_recent_deployments or
+  search_runbooks is a source (with step). Risky calls that ran go to `done`, failed ones to `not_done`; a pending
+  call is skipped. With a report and no risky action, `not_done` says no change was proposed; a run routed to a
+  human adds the routing reason.
 
 ## 3. Run state machine
 
@@ -234,7 +271,7 @@ step += 1; add tokens/cost; events llm_call + thought; warning if guards.near_to
 if no tool calls: note "always call a tool"; checkpoint; CONTINUE
 for call in decision.calls:                              # (3) dispatch
     finish_triage -> report; approval.route(): completed (fix applied AND confidence>=0.6) else escalated;
-                     promote memory if completed; STOP
+                     promote memory if completed; stream + emit answer (last event); STOP
     update_plan   -> replace plan; event plan|plan_revised
     unknown tool  -> error observation
     risky         -> collect
@@ -245,6 +282,29 @@ risky[1:] -> "one risky action per turn" error
 risky[0]  -> gate.request(): approval row + state.pending; checkpoint; status waiting_approval; STOP
 checkpointer.save(rs); CONTINUE                          # (4) state.py
 ```
+
+### 4.1 Routing
+`approval.route(confidence, mitigated, min_confidence)` decides the final status in code:
+
+| Condition (checked in order) | Status | `routing_reason` |
+|---|---|---|
+| confidence < `MIN_CONFIDENCE` | `escalated` | `confidence 0.40 below 0.6` |
+| no approved fix was applied | `escalated` | `no mitigation was applied; a human should confirm and close` |
+| otherwise | `completed` | `mitigated and verified with high confidence` |
+
+Step limit and token budget end the run through the same path with confidence 0, so they always escalate.
+Only `completed` runs are promoted to long-term memory.
+
+### 4.2 Error handling
+| Error | Raised by | Handled as |
+|---|---|---|
+| `TransientToolError` | a tool (timeout, 5xx) | retried `TOOL_MAX_RETRIES` times with `backoff * 2^(n-1)`; then an error observation |
+| `ToolError` | a tool or `validate_args()` | returned at once as an observation with hints; the model can correct itself |
+| unknown tool, no tool call, repeated call | the loop | warning event and runtime note; the step counts toward the limit |
+| `LLMError` | an LLM adapter after its own retries | event `error`, status `failed`, resumable from the checkpoint |
+| any other exception in a step | `Runtime._drive()` | event `error`, status `failed`, resumable |
+| `ConflictError` | `Runtime` on a disallowed transition | HTTP `409` |
+| `KeyError` / missing run | API | HTTP `404` |
 
 ## 5. Runtime worker
 ```
@@ -328,11 +388,11 @@ sequenceDiagram
 | GET | `/api/scenarios` | - | list of `{id,title,alert}` | |
 | GET | `/api/tools` | - | list of `{name,description,parameters,risky}` | |
 | GET | `/api/memory` | - | list of memory rows | |
-| POST | `/api/runs` | `{scenario, alert?}` | 201 run view | 400 unknown scenario |
+| POST | `/api/runs` | `{scenario, alert?}` (`alert` replaces the scenario's alert text) | 201 run view | 400 unknown scenario |
 | GET | `/api/runs` | - | list (summary) | |
-| GET | `/api/runs/{id}` | - | run view (status, plan, steps, pending_approval, approvals, report, infra, tokens, cost) | 404 |
+| GET | `/api/runs/{id}` | - | run view (status, plan, steps, notes, pending_approval, approvals, report, answer, sources, done, not_done, infra, tokens, cost) | 404 |
 | GET | `/api/runs/{id}/events?after=N` | - | events with id > N | 404 |
-| GET | `/api/runs/{id}/stream?after=N` | - | `text/event-stream` (`event: trace`, final `event: end`) | 404 |
+| GET | `/api/runs/{id}/stream?after=N` | - | `text/event-stream` (`event: token`, `event: trace`, final `event: end`) | 404 |
 | POST | `/api/runs/{id}/pause` | - | run view | 404, 409 |
 | POST | `/api/runs/{id}/resume` | - | run view | 404, 409 |
 | POST | `/api/runs/{id}/cancel` | - | run view | 404, 409 |
@@ -358,17 +418,17 @@ Retry policy: only `TransientToolError` is retried, `TOOL_MAX_RETRIES=3`, delay 
 `ToolError` (bad input) is returned immediately with a helpful message.
 
 ## 9. LLM adapters
-- **Gemini** (`google-genai`): `client.models.generate_content(model, contents=prompt, config)` with
+- **Gemini** (`google-genai`): `client.models.generate_content_stream(model, contents=prompt, config)` with
   `system_instruction`, `tools=[Tool(function_declarations=[FunctionDeclaration(name, description, parameters_json_schema)])]`,
   `FunctionCallingConfig(mode=AUTO)`, automatic function calling disabled (the loop executes tools itself),
-  temperature 0.1. Parses text parts as the *thought* and all `function_call` parts as (parallel) tool calls;
+  temperature 0.1. Merges the streamed chunks (`collect_stream()`), then parses text parts as the *thought* and all `function_call` parts as (parallel) tool calls;
   usage from `usage_metadata` (prompt, candidates + thoughts tokens). Retries 4x; on 429 waits the server's hint (cap 60 s).
   API version defaults to `v1beta` (override `GEMINI_API_VERSION`). Model `GEMINI_MODEL` (default `gemini-3.5-flash-lite`).
 - **Mock**: rule-based policy reading the structured state; deterministic; token counts estimated as chars/4.
 
 ## 10. Configuration
 See `.env.example`: `GEMINI_API_KEY, GEMINI_MODEL, DB_PATH, MAX_STEPS, MAX_RUN_TOKENS, STEP_DELAY_SECONDS,
-TOOL_MAX_RETRIES, TOOL_BACKOFF_SECONDS, MIN_CONFIDENCE, PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M`.
+STREAM_DELAY_SECONDS, TOOL_MAX_RETRIES, TOOL_BACKOFF_SECONDS, MIN_CONFIDENCE, PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M`.
 
 ## 11. Tests (what proves what)
 | Test file (in `tests/`) | Proves |
@@ -379,18 +439,21 @@ TOOL_MAX_RETRIES, TOOL_BACKOFF_SECONDS, MIN_CONFIDENCE, PRICE_INPUT_PER_M, PRICE
 | `agent/test_guards_and_recovery.py` | step limit + loop guard; token budget; LLM outage -> failed -> resume; self-correction after bad args; unknown tool; one risky per turn |
 | `agent/test_context.py` | truncation, compaction never drops a step, tag-escape safety |
 | `llm/test_gemini_adapter.py` | Gemini response parsing, declarations, retries, 429 hint (SDK faked - no key needed) |
+| `agent/test_plan_answer.py` | plan before any other tool call; only `update_plan` offered until a plan exists; answer is the last event and matches the report; escalated answer; plan and answer survive a restart |
+| `agent/test_streaming.py` | deltas join to the saved thought, plan and answer text; plan deltas before answer deltas; Gemini stream merging |
+| `agent/test_sources.py` | sources, done and not done for a completed run, a rejected action, and a run with nothing wrong |
 | `api/test_api.py` | every endpoint incl. SSE, 404/409/422, pause really stops, UI page served |
 
 ## 12. Framework choices
-The skills used while building this suggest these frameworks. We adopted only what keeps behaviour identical and adds
-no build step.
+Frameworks considered, and why each was or was not adopted. The rule: adopt only what keeps behaviour identical and
+adds no build step.
 
-| Source | Suggests | Used here | Why |
+| Option | What it offers | Used here | Why |
 |---|---|---|---|
-| langchain-skills (`langchain-build-agent`) | Deep Agents / `create_agent` on LangGraph | No; same structure in plain Python | A rewrite would change the loop the tests and traces pin down. |
-| langchain-skills (`agent-tracing`, `agent-monitoring`, `eval-engineering`) | LangSmith tracing, OpenTelemetry, LangSmith evals | No; own events table + `evals/` harness | Works offline with no account. Events map to OTel GenAI spans later. |
-| frontend-design, interface-design, better-ui | Framework-neutral; examples use React, Tailwind, shadcn, Motion | No; plain HTML, CSS and JS | No build step; the rules (tokens, states, hit areas, motion) are applied in CSS. |
-| (FastAPI, already in use) | Pydantic models | Yes, for request bodies (`StartRun`, `Decision`, `Guidance`) | Run state stays a plain dict in SQLite JSON; typing it with Pydantic would change serialisation. `RunState` is a dataclass. |
+| LangGraph (`create_agent`, Deep Agents) | Graph runtime, checkpointer, `interrupt()` | No; same structure in plain Python | A rewrite would change the loop the tests and traces pin down. |
+| LangSmith / OpenTelemetry | Hosted tracing, monitoring and evals | No; own events table + `evals/` harness | Works offline with no account. Events map to OTel GenAI spans later. |
+| React, Tailwind, shadcn | Component model, utility CSS | No; plain HTML, CSS and JS | No build step; design tokens, states and motion are plain CSS. |
+| (FastAPI, already in use) | Pydantic models | Yes, for request bodies (`StartRun`, `Decision`, `Guidance`) and `Answer` | Run state stays a plain dict in SQLite JSON; typing it with Pydantic would change serialisation. `RunState` is a dataclass. |
 
 **How the loop maps to LangGraph:** `planner.next_decision` = model node; `executor.run_parallel` = tool node;
 `ApprovalGate.request` = `interrupt()` before risky tools, `decide` = resume with a command; `Checkpointer` + SQLite =
