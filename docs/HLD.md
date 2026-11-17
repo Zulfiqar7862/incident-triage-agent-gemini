@@ -21,7 +21,7 @@ its reasoning live, and **does not lose work** if the server restarts.
 
 ### Non-functional requirements
 - Runs locally with one command, no cloud, no Docker; works offline (mock LLM).
-- Simple enough to explain in an interview; every concept maps to production tools.
+- Simple enough to explain end to end; every concept maps to production tools.
 - Safe by construction: approval rule in code; tool output treated as untrusted data.
 - Observable: every decision is in the trace with tokens / latency / cost.
 

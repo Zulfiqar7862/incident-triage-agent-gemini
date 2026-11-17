@@ -125,7 +125,7 @@ incident-triage-agent/
 ├── tests/                   # pytest: loop, approvals, resume, guards, context, Gemini adapter, API
 ├── evals/                   # golden.json + run_evals.py (scored regression eval)
 ├── scripts/                 # demo.sh (curl walkthrough), check_python.py
-├── docs/                    # HLD.md, LLD.md, API.md, INTERVIEW_PREP.md
+├── docs/                    # HLD.md, LLD.md, API.md, screenshots/
 ├── .run/                    # PyCharm run configurations
 ├── Makefile, requirements.txt, .env.example, AI_LOG.md
 ```
