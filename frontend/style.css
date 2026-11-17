@@ -128,7 +128,6 @@ button.danger { color: var(--red); border-color: var(--red-line); }
   button:hover:not(:disabled) { background: var(--inset); border-color: var(--muted); }
   button.primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); }
   button.danger:hover:not(:disabled) { background: var(--red-bg); border-color: var(--red); }
-  .run-list li:hover { background: var(--inset); }
 }
 button:disabled { background: transparent; border-color: var(--line); color: var(--faint); cursor: not-allowed; }
 button[aria-busy="true"] { cursor: progress; }
@@ -217,9 +216,10 @@ select:disabled { color: var(--faint); }
 /* ---------------------------------------------------------------- lists */
 .run-list, .memory-list { list-style: none; padding: 0; margin: 0; }
 .run-list { max-height: 320px; overflow: auto; overscroll-behavior: contain; }
-.run-list li[data-id] { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-1);
-  min-height: var(--hit); padding: var(--s-2) var(--s-3); border-radius: var(--r-control); cursor: pointer; }
-.run-list li.active { background: var(--wash); }
+.run-item { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-1); width: 100%;
+  padding: var(--s-2) var(--s-3); border: 0; background: transparent; text-align: left; font-weight: 400; white-space: normal; }
+.run-item[aria-current="true"], .run-item[aria-current="true"]:hover { background: var(--wash); }
+.run-item:focus-visible { outline-offset: -2px; }   /* stays visible inside the scrolling list */
 .run-list .sub, .memory-list { font-size: var(--fs-caption); color: var(--muted); }
 .memory-list li { padding: var(--s-1) 0; border-bottom: 1px solid var(--line); }
 .memory-list li:last-child { border-bottom: 0; }

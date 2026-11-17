@@ -122,10 +122,11 @@ const reportHtml = (rep, status) => `<h2>${status === "escalated" ? "Handed to a
       <p><b>Follow-ups:</b></p><ul>${(rep.follow_ups || []).map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`;
 
 function renderRunList(runs) {
-  $("runs").innerHTML = runs.map((r) => `<li data-id="${r.id}" class="${r.id === current ? "active" : ""}">
+  // each row is a real <button>, so it is reachable with Tab and opens with Enter or Space
+  $("runs").innerHTML = runs.map((r) => `<li><button class="run-item" data-id="${r.id}" aria-current="${r.id === current}">
       <span>${esc(r.title)}<br><span class="sub">Started ${time(r.created_at)}</span></span>
-      ${statusPill(r.status)}</li>`).join("") || '<li class="state">No runs yet. Pick an incident above and press Start triage.</li>';
-  document.querySelectorAll("#runs li[data-id]").forEach((li) => (li.onclick = () => select(li.dataset.id)));
+      ${statusPill(r.status)}</button></li>`).join("") || '<li class="state">No runs yet. Pick an incident above and press Start triage.</li>';
+  document.querySelectorAll("#runs [data-id]").forEach((b) => (b.onclick = () => select(b.dataset.id)));
 }
 
 function renderMemory(mem) {
