@@ -13,16 +13,38 @@ Services: data & AI, app modernization, cloud & platform engineering, security; 
 Source: [LinkedIn company page](https://linkedin.com/company/intuitiveaiglobal).
 
 **What they are hiring for in AI right now (Oct-Nov 2026).**
-- A talent-acquisition post for *Agentic AI Architects / Senior Engineers* asks for: LLMs, RAG, embeddings,
-  vector search, multi-agent orchestration, **Strands Agents, Amazon Bedrock & Bedrock AgentCore, MCP**, tool calling,
-  planning, **memory & context engineering, agent evaluation, tracing, observability**, Python, APIs, Docker, AWS
-  (Bedrock, OpenSearch, CloudWatch, IAM, CDK); use cases include **RCA, telemetry and AI-powered DevOps / AgentOps**.
-  Source: [LinkedIn post, Soni Kaur (TA Manager)](https://www.linkedin.com/posts/soni-kaur-a24716192_hiring-generativeai-agenticai-activity-7513594190480609283-Givp).
+- A public talent-acquisition hiring post on LinkedIn (Oct 2026) for *Agentic AI Architects / Senior Engineers* asks for:
+  LLMs, RAG, embeddings, vector search, multi-agent orchestration, **Strands Agents, Amazon Bedrock & Bedrock AgentCore, MCP**,
+  tool calling, planning, **memory & context engineering, agent evaluation, tracing, observability**, Python, APIs, Docker,
+  AWS (Bedrock, OpenSearch, CloudWatch, IAM, CDK); use cases include **RCA, telemetry and AI-powered DevOps / AgentOps**.
+- A public Innovation-Lab AI-engineer hiring post lists Python, FastAPI, **Google ADK (preferred), LangGraph**, RAG/GraphRAG,
+  vector DBs and **Langfuse (or similar) observability**, production deployments and code review.
 - A *Senior/Lead AI Developer* listing (Bengaluru/Ahmedabad) prefers **Google ADK**, FastAPI, RAG, vector DBs
   (ChromaDB, pgvector), MCP, Vertex AI/Bedrock. Source: [BestKaam listing](https://www.bestkaam.com/job/senior-lead-ai-developer-intuitiveai-bengaluru-4-8-years-972988).
 - **Takeaway:** our incident-triage agent is exactly their domain (AI for DevOps / RCA). Be ready to map our design
   to **AWS Bedrock AgentCore** (Runtime, Memory, Gateway, Observability) and **Google ADK** (agents, tools, sessions,
   memory, callbacks) - see section 4.
+
+**Their own products - this is the language to use.** (Company-level, public sources.)
+- **IntuitiveIQ** - decision intelligence and **agent governance / control plane**: agents grounded in enterprise
+  knowledge and policy; explainability, traceability, auditability; **confidence / trust scores that decide auto-continue
+  vs human review**; multi-model, multi-agent. Sources: [intuitiveiq.ai](https://intuitiveiq.ai/),
+  [AWS Marketplace](https://aws.amazon.com/marketplace/pp/prodview-ebgctmekutnbi).
+- **APEX** - AI-powered **platform-engineering** control plane on Amazon Bedrock / SageMaker: orchestration, self-service,
+  continuous compliance, agentic workflow automation for platform teams. This is the closest analogue to our take-home.
+  Source: [AWS Marketplace](https://aws.amazon.com/marketplace/pp/prodview-rhnsb7n7vxxqe).
+- **AWS + governance stance** - AWS Premier Tier partner; their blog on **Amazon Bedrock AgentCore Policy** argues that
+  governance must be enforced **outside the agent's code/prompt**, deterministically, with human-in-the-loop.
+  Source: [Intuitive blog](https://intuitive.ai/blog/amazon-bedrock-agentcore-policy-enterprise-ai-governance/),
+  [AWS partner page](https://intuitive.ai/partners/aws/). They also announced being an Anthropic Claude preferred partner
+  ([news](https://intuitive.ai/news/intuitive-ai-anthropic-claude-preferred-partner/)) -> **model optionality** matters.
+- **Company narrative** - "path from PoC to production", governed and measurable AI (their aiE framework), business
+  outcome over technology. Sources: [CEO letter](https://intuitive.ai/blog/a-letter-from-the-ceo/),
+  [CRN interview 2026](https://www.crn.com/news/ai/2026/intuitive-ai-grew-600-percent-thanks-to-this-ai-strategy-ceo-says-it-s-not-about-the-technology-now).
+- **How to position this repo:** not a chatbot - a small **governed operator control plane** for one platform-engineering
+  task: every recommendation has a reason, an evidence trail (tool calls), a recorded human decision, and a confidence-based
+  route to a human. Same ideas as IntuitiveIQ (trust score -> human review) and AgentCore Policy (guardrails outside the
+  model), at take-home scale. Don't claim it *is* IntuitiveIQ/APEX; say "it's built on the same principles".
 
 **Interview process reports (public).**
 - Glassdoor (all roles, 53 reports): ~**10 days** average hiring time, 67.9% positive, difficulty **3.26/5**;
@@ -178,20 +200,38 @@ Strands / Bedrock AgentCore, OTel GenAI semantic conventions, context-engineerin
 | Trace events | AgentCore Observability / CloudWatch (OTel) | ADK tracing (OTel) | LangSmith |
 | Worker threads | AgentCore Runtime | Agent Engine | LangGraph Platform |
 
+
+## 4b. How this maps to production
+| Area | In this repo (take-home) | Production version |
+|---|---|---|
+| **Tracing** | `events` table: every LLM call (model, tokens, latency, cost, context sizes) and tool call (args, attempts, latency, output); live SSE | Emit the same data as **OpenTelemetry GenAI spans** (trace = run, span = step, child spans = LLM / tool) to **Langfuse** (or AgentCore Observability / CloudWatch). Alerts on cost per run, failure rate, approval wait time, escalation rate. |
+| **Policy layer** | `risky` flag on tools enforced in code; one risky action per turn; routing rule (fix applied + confidence >= 0.6, else human) | A separate, deterministic **policy engine** (e.g. AgentCore Policy / OPA / Cedar) deciding per tool, environment, severity and user role: auto-approve, require one approver, require two, or deny. Approvals tied to SSO identity, with expiry and audit export. |
+| **Trust / confidence** | Model's self-reported confidence + "was anything mitigated" check | Combine model confidence with evidence checks (did metrics recover? does the runbook match?) into a trust score; low score -> human review (the IntuitiveIQ pattern). |
+| **Evals** | `make eval`: 4 golden scenarios, 5 deterministic checks, saved JSON results; live Gemini 100% (after 2 fixes the eval found) | Run in CI on every prompt/model/tool change; bigger golden set from real postmortems; **LLM-as-judge** for report quality; sampled human review; track regressions per model version. |
+| **Model optionality** | `LLM` interface with Gemini + offline mock; model name from env | Add Bedrock (Claude, Nova) / Vertex adapters behind the same interface; route by cost/latency/quality; fall back on outage; evals decide which model ships. |
+| **Durable runtime** | SQLite checkpoint per step, threads, `recover()` | Postgres + queue with run leases, or AgentCore Runtime / LangGraph checkpointer / Temporal; idempotency keys on every write. |
+| **Tools** | Simulated K8s-like world | MCP servers / AgentCore Gateway in front of K8s, Prometheus, Loki, ArgoCD - read-only credentials first. |
+| **Memory** | SQLite `memory` table, redaction, 90-day staleness | AgentCore Memory / vector store, per-team scoping, TTLs, PII policy. |
+
 ---
 
-## 5. Five-minute demo script
-1. **(30 s) Problem.** "First 20 minutes of every incident is the same loop. This agent does it, but never changes
-   production without a human, and survives restarts." Show `/health` badge (Gemini or mock).
-2. **(90 s) Run `bad-deploy`.** Point out: the plan; parallel calls; the **retry** on `get_metrics` (504 then success);
-   the thought lines; the LLM call line with tokens / cost / context size.
-3. **(60 s) Approval.** Approval card shows `rollback_deployment(payments-api, v2.3.9)` and *why*. Before approving,
-   **Ctrl+C the server, restart it** (`make run`), refresh - still waiting, nothing lost. Approve. Watch verify + report.
-4. **(45 s) Safety.** Run `traffic-spike`: show the prompt-injection warning in the trace and that the only approval
-   requested is `scale_service`. Reject it with a comment -> the agent reads the comment and escalates.
-5. **(30 s) Judgment.** Run `ghost-alert`: agent finds nothing, does **not** invent a fix, escalates to a human.
-6. **(45 s) Proof.** `make test` (all green, offline) and `make eval` table. Mention the two bugs the live eval found
-   (429 rate-limit handling, routing rule) - that's why evals exist.
+## 5. Five-minute demo script - "a governed operator control plane for incident triage"
+1. **(30 s) Outcome first.** "The first 20 minutes of every incident is the same loop. This agent runs that loop, but it is
+   governed: every action has a reason and an evidence trail, nothing touches production without a recorded human
+   decision, and it survives a crash." Point at the `/health` badge (Gemini or offline mock).
+2. **(90 s) Explainability.** Run `bad-deploy`. Show: the plan; three read tools in parallel; the **retry** on
+   `get_metrics` (504 then success); the reasoning line per step; the LLM line with tokens / cost / latency and **how much
+   context the model saw** (steps in full vs compacted).
+3. **(60 s) Human decision + durability.** The approval card shows `rollback_deployment(payments-api, v2.3.9)` and *why*.
+   Before approving, **Ctrl+C the server, restart it**, refresh - still waiting, nothing lost. Approve with a comment.
+   Watch verification and the structured report.
+4. **(45 s) Guardrails outside the model.** Run `traffic-spike`: the trace flags a prompt injection in the logs; the
+   only action requested is `scale_service`. Reject it with a comment -> the agent reads the comment and escalates.
+   "The model can *ask* for anything; the policy in code decides what *runs*."
+5. **(30 s) Trust routing.** Run `ghost-alert`: nothing is wrong, the agent does not invent a fix, it routes to a human.
+6. **(45 s) Proof + path to production.** `make test` (green, offline) and the `make eval` table. Mention the two issues
+   the live eval found (429 handling, routing rule). Close with section 4b: Langfuse/OTel, policy engine, CI evals,
+   Bedrock/Claude optionality.
 
 ## 6. Honest limitations (say them before they ask)
 - Simulated infra; single process (SQLite + threads); the mock LLM is rule-based (for tests/demo), Gemini is the real brain.

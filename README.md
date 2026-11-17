@@ -1,6 +1,6 @@
 # Incident Triage Agent
 
-An AI agent that **triages production incidents on its own** - it plans, calls tools, recovers
+A small **governed operator control plane** for incident triage: an AI agent that **triages production incidents on its own** - it plans, calls tools, recovers
 from errors, and **stops for human approval before touching production**. An operator watches every
 thought and tool call live in a web UI and can approve, reject, pause, resume, cancel or give guidance.
 Every step is checkpointed to SQLite, so a run **survives a server restart** and continues where it stopped.
@@ -55,7 +55,7 @@ the agent must *not* invent a fix).
 | `make install` | create `.venv`, install `requirements.txt` (needs Python 3.11+) |
 | `make quickstart` | create `.env` if missing, print URLs, start server on :8000 |
 | `make run` | start server (no .env creation) |
-| `make test` | 35 pytest tests, offline (forces the mock LLM even if a key is set) |
+| `make test` | 34 pytest tests, offline (forces the mock LLM even if a key is set) |
 | `make eval` | golden-scenario eval (uses Gemini if key set, else mock) |
 | `make demo` | full run through **curl only** (start server first, in another terminal) |
 | `make clean` | delete `data/` (the SQLite database) and caches |
@@ -127,12 +127,14 @@ incident-triage-agent/
 ```
 
 ## 6. Verified results
-- `make test`: **35 passed** (offline).
-- `make eval` with mock: 100% on 4 golden scenarios.
-- `make eval` with **Gemini `gemini-3.5-flash-lite`** (live): bad-deploy, memory-leak, ghost-alert 100%.
-  First live run hit the **free-tier limit of 15 requests/min** on traffic-spike - the run went to `failed`
-  (resumable) exactly as designed, and it led to a fix: the Gemini client now honours the server's
-  `retry in Ns` hint. See `AI_LOG.md`.
+- `make test`: **34 passed** (offline, ~4 s).
+- `make eval` with the mock LLM: **100%** on 4 golden scenarios.
+- `make eval` with **live Gemini `gemini-3.5-flash-lite`**: first run 85% -> two real issues found and fixed:
+  1. the free tier allows **15 requests/min**; one run hit 429 and went to `failed` (resumable, as designed) -> the
+     client now waits for the server's `retry in Ns` hint;
+  2. on `ghost-alert` Gemini was *confident* nothing was wrong and finished as `completed` -> routing rule moved into
+     code (completed only if a fix was applied).
+  After the fixes: **100%** (4/4), ~5-9 steps and ~$0.005 per run.
 
 ## 7. What's next (with more time)
 1. **Real adapters** behind the same tool interface: Kubernetes API, Prometheus, Loki, ArgoCD (read-only service account first).
