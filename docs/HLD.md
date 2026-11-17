@@ -55,7 +55,7 @@ flowchart LR
 ### Components
 | Component | Responsibility | Key idea |
 |---|---|---|
-| **UI** (`static/`) | Start runs, watch the agent think (collapsible Thinking panel) and the trace, approve/reject, pause/resume/cancel, send guidance | Plain JS, SSE for the trace + 1.5 s polling for run state |
+| **UI** (`static/`) | Start runs, watch the agent think (Thinking panel) and the trace, review changes on a plain-language approval card, pause/resume/cancel, send guidance; empty, loading and error states | Plain JS, SSE for the trace + 1.5 s polling for run state |
 | **API** (`app/main.py`) | REST endpoints for runtime, tools, state; SSE stream | Thin: validates input, calls Runtime, returns DB state |
 | **Runtime** (`agent/runtime.py`) | Lifecycle of runs; one worker thread per active run; `recover()` on startup | Control = conditional status change in DB; worker notices at next step |
 | **Agent** (`agent/loop.py`) | Executes exactly one step and checkpoints; a thin loop over the five parts below | Stateless between steps: always starts from DB |
@@ -81,7 +81,7 @@ sequenceDiagram
     participant T as Tools
     participant D as SQLite
     O->>A: POST /api/runs {scenario}
-    A->>D: create run (status=running)
+    A->>D: create run (pending -> running)
     A->>R: spawn worker
     loop each step
         R->>D: load checkpoint
@@ -105,7 +105,7 @@ sequenceDiagram
 
 | Decision | Chosen | Alternative | Why / trade-off |
 |---|---|---|---|
-| Orchestration | Own ~250-line loop | LangGraph, Google ADK, Temporal | Fully explainable in a 2-4h timebox. Same concepts (checkpoint per node, interrupt for approval, resume). Would adopt LangGraph/ADK/Temporal for multi-worker production. |
+| Orchestration | Own small loop (`app/agent/`: planner, executor, approval gate, guards, state) | LangGraph, Google ADK, Temporal | Fully explainable in a 2-4h timebox. Same concepts (checkpoint per node, interrupt for approval, resume). Would adopt LangGraph/ADK/Temporal for multi-worker production. |
 | Conversation state | Rebuild prompt from DB each step | Keep growing chat history in the SDK | Small, deliberate context; resume is trivial; no provider-specific history (e.g. thought signatures). Cost: we re-send the summary every step (cheap at these sizes). |
 | Durability | SQLite checkpoint after every step | Event sourcing, Postgres, Temporal | Zero setup, transactional. Single process only - documented as next step. |
 | Delivery semantics | Read tools at-least-once; approved actions exactly-once | Exactly-once everywhere | Reads are idempotent, so repeating after a crash is harmless. Writes are protected by marking the approval `executed` in the same transaction as the checkpoint (real infra: approval id as idempotency key). |
@@ -126,7 +126,7 @@ Why small: models get worse as input grows, long before the advertised limit; mo
 ## 6. Memory
 - **Short-term (working) memory** = the run checkpoint: plan, steps (calls + results), notes, pending action, world.
 - **Long-term memory** = `memory` table: one row per affected service of a *confident, completed* run
-  (symptom, root cause, resolution). Promotion rule: only `completed` (confidence >= 0.6) runs are saved.
+  (symptom, root cause, resolution). Promotion rule: only `completed` runs (fix applied and confidence >= 0.6) are saved.
   **Redaction** (secrets, emails) before saving. **Staleness**: only memories < 90 days are recalled, max 3,
   and the prompt says "may be outdated - verify".
 

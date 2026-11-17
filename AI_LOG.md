@@ -22,6 +22,8 @@ what to include and how to export it. Replace the placeholder section with the r
 | Thinking panel + calm restyle | Same skill, plus a "calm, minimal, spacious" brief: warm neutral palette, one muted accent, serif headings, 1px dividers; a collapsible Thinking panel built from the existing event stream | No backend change; panel collapses to "Thought for Ns" when the run waits or ends |
 | UI polish (2) | Skills from ui-skills.com: `interface-design` (github.com/Dammyjay93/interface-design) for console craft and consistency, `better-ui` (github.com/jakubkrehel/skills, skills/better-ui) for borders, press states, hover and motion; the site's quick rules (tabular-nums, text-wrap balance/pretty, 44x44px hit areas) | Applied as CSS only; verified in headless Chrome |
 | Refactor | Split `Agent.step` into planner, executor, approval gate, guards and state modules (LangChain-style "model + tools + middleware" structure, no framework dependency) | Zero behavior change: 35/35 tests pass and the full event trace of 8 mock runs is byte-identical before and after |
+| UI polish (3) | Second pass audited rule by rule against the three UI skills: token system, one type scale, button system, empty/loading/error states; approval card rebuilt as a plain-language review | Styling and markup only; verified in headless Chrome incl. error states |
+| Readability | Backend helpers split out (loop, context, mock policy, db) and frontend organised into sections | Proven unchanged: identical event traces (backend) and identical DOM + computed styles (frontend) |
 | Docs | Drafted HLD/LLD/API/README | Verified every claim against the code; edited for plain language |
 
 ## Transcript

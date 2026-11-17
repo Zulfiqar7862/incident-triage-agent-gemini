@@ -19,6 +19,10 @@ classDiagram
       +llm; +registry
       +step(run_id) "continue|stop"
       -_resume_gated_action(rs)
+      -_record_decision(rs, decision)
+      -_classify(rs, call) read|risky|done
+      -_run_reads(rs, calls)
+      -_request_approval(rs, risky_calls)
       -_finish(rs, report_args)
     }
     class RunState {
@@ -376,3 +380,23 @@ TOOL_MAX_RETRIES, TOOL_BACKOFF_SECONDS, MIN_CONFIDENCE, PRICE_INPUT_PER_M, PRICE
 | `test_context.py` | truncation, compaction never drops a step, tag-escape safety |
 | `test_gemini_adapter.py` | Gemini response parsing, declarations, retries, 429 hint (SDK faked - no key needed) |
 | `test_api.py` | every endpoint incl. SSE, 404/409/422, pause really stops, UI page served |
+
+## 12. Framework choices
+The skills used while building this suggest these frameworks. We adopted only what keeps behaviour identical and adds
+no build step.
+
+| Source | Suggests | Used here | Why |
+|---|---|---|---|
+| langchain-skills (`langchain-build-agent`) | Deep Agents / `create_agent` on LangGraph | No; same structure in plain Python | A rewrite would change the loop the tests and traces pin down. |
+| langchain-skills (`agent-tracing`, `agent-monitoring`, `eval-engineering`) | LangSmith tracing, OpenTelemetry, LangSmith evals | No; own events table + `evals/` harness | Works offline with no account. Events map to OTel GenAI spans later. |
+| frontend-design, interface-design, better-ui | Framework-neutral; examples use React, Tailwind, shadcn, Motion | No; plain HTML, CSS and JS | No build step; the rules (tokens, states, hit areas, motion) are applied in CSS. |
+| (FastAPI, already in use) | Pydantic models | Yes, for request bodies (`StartRun`, `Decision`, `Guidance`) | Run state stays a plain dict in SQLite JSON; typing it with Pydantic would change serialisation. `RunState` is a dataclass. |
+
+**How the loop maps to LangGraph:** `planner.next_decision` = model node; `executor.run_parallel` = tool node;
+`ApprovalGate.request` = `interrupt()` before risky tools, `decide` = resume with a command; `Checkpointer` + SQLite =
+LangGraph checkpointer (one checkpoint per super-step); `guards` = recursion limit and middleware; `Runtime.recover()` =
+resuming a thread from its last checkpoint.
+
+**Libraries in use:** Python: `fastapi`, `uvicorn`, `pydantic`, `google-genai`, `python-dotenv`; tests: `pytest`, `httpx`.
+Browser: none (plain HTML, CSS and JS in `static/`, no CDN).
+

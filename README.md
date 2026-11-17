@@ -7,7 +7,7 @@ It reads the alert, writes a plan, investigates with tools (metrics, logs, deplo
 in a web console and can approve, reject, pause, resume, cancel, or message the agent. Every step is checkpointed to
 SQLite, so a run **continues after a server restart**.
 
-| Live thinking panel | Approval gate | Finished run |
+| Live thinking panel | Approval card | Finished run |
 |---|---|---|
 | ![thinking](docs/screenshots/thinking-expanded.png) | ![approval](docs/screenshots/approval.png) | ![completed](docs/screenshots/completed.png) |
 
@@ -117,11 +117,15 @@ copy .env.example .env
 
 2. **Watch it think.** The *Thinking* panel shows the current phase in one line. Open it to see the plan, the reasoning
    for each step, the tools chosen and what they returned. The *Live trace* lists every event with tokens, latency and cost.
-3. **Decide.** When the agent proposes a change, the run pauses and an approval panel appears. Approve or reject, with an
-   optional comment the agent reads.
+3. **Decide.** When the agent proposes a change, the run pauses and an approval card appears: the action in plain words
+   ("Roll back payments-api from v2.4.0 to v2.3.9"), what each argument means, why the agent chose it and the evidence
+   so far. Approve or reject, with an optional comment the agent reads.
 4. **Intervene at any time:** pause, resume, cancel, or send a message the agent reads at its next step.
 5. **Read the report:** root cause, severity, confidence, actions taken, follow-ups. A run is `completed` only if an approved
    fix was applied and confidence is at least 0.6; otherwise it is `escalated` to a human.
+
+Empty, loading and error states are shown in place: a banner when the server cannot be reached or an action fails,
+the run's error with **Resume run** when the model fails, and "Disconnected. Reconnecting…" on the live trace.
 
 **Terminal only.** With the server running, `make demo` drives a full run with curl. Every endpoint has a curl example in
 [docs/API.md](docs/API.md).
@@ -136,26 +140,21 @@ make eval     # 4 golden scenarios end to end, scored on 5 checks (uses Gemini i
 The tests cover the agent loop, the approval gate, restart and crash recovery, exactly-once execution of approved actions,
 guards (step, token and loop limits), context budgeting, the Gemini adapter (with a faked SDK) and every API endpoint.
 
-Latest eval results: mock 100%; live Gemini `gemini-3.5-flash-lite` 100% (4/4). The first live runs found three real issues,
+Eval results: mock 100%; last live Gemini run (`gemini-3.5-flash-lite`) 100% (4/4). The first live runs found three real issues,
 now fixed: free-tier rate limits (the client now honours retry hints), a confident "nothing is wrong" being marked
 `completed` (routing moved into code), and a valid rollback fix the simulation did not model.
 
 ## Design decisions
 
-| Decision | Why |
-|---|---|
-| A small custom loop instead of a framework | Fits the 2-4 hour timebox and every line can be explained. The structure borrows LangChain's idea (agent = model + tools + middleware: planner, executor, approval gate, guards, typed state) without the dependency; checkpoint, interrupt and resume map directly to LangGraph, Google ADK or Bedrock AgentCore. |
-| Rebuild the prompt from saved state every step | The context is designed, not accumulated, and resume is trivial because nothing lives only in memory. |
-| Checkpoint to SQLite after every step | Durable execution with no extra infrastructure. A crash repeats at most one step; read-only tools are safe to repeat. |
-| Approval gate enforced in code | Tools that change production are flagged `risky` and never run without a human, whatever the model or a prompt injection asks for. |
-| Approved action and checkpoint in one transaction | An approved change runs exactly once, even across a crash. |
-| Context budget | Tool output is truncated, older steps shrink to one-line summaries, and every step keeps at least its summary. |
-| Routing decided in code | `completed` needs an applied fix and confidence ≥ 0.6; everything else goes to a human. |
-| Offline mock policy | Deterministic tests and evals, demos without a key, and CI never calls a paid API. |
-| Worker thread per run, status in SQLite | Simple. Pause and cancel take effect at step boundaries; conditional updates prevent races. |
+- **Own small agent loop, no framework.** Planner, executor, approval gate, guards and typed state in `app/agent/`;
+  it maps one-to-one onto LangGraph (see [LLD, Framework choices](docs/LLD.md#12-framework-choices)).
+- **The prompt is rebuilt from saved state every step**, within a budget, so resume is trivial.
+- **Checkpoint to SQLite after every step**; an approved change and its checkpoint commit together, so it runs once.
+- **Safety and routing live in code**: risky tools always need a human; `completed` needs an applied fix and
+  confidence ≥ 0.6, everything else goes to a human.
+- **Offline mock model** for deterministic tests, evals and demos without a key.
 
-Details: [docs/HLD.md](docs/HLD.md) (architecture, trade-offs, failure modes) and [docs/LLD.md](docs/LLD.md)
-(schema, state machine, algorithms, sequences).
+Trade-offs and failure modes: [docs/HLD.md](docs/HLD.md). Schema, algorithms and sequences: [docs/LLD.md](docs/LLD.md).
 
 ## Project layout
 
