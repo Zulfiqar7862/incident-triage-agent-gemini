@@ -46,7 +46,7 @@ The banner should say `LLM mode: offline mock (no key in .env)`. Then:
 
 1. Open http://localhost:8000, keep **Checkout failing: payments-api 5xx spike**, press **Start triage**.
 2. Watch the *Thinking* panel; click **Show reasoning** to expand it.
-3. When the amber panel appears, press **Approve change**. The run ends `completed` with a report.
+3. When the approval card appears, press **Approve change**. The run ends `completed` with a report.
 4. Start another run and press **Reject change**: it ends `escalated`.
 
 Checks from a second terminal (server still running):
@@ -116,8 +116,9 @@ copy .env.example .env
    for each step, the tools chosen and what they returned. The *Live trace* lists every event with tokens, latency and cost.
 3. **Decide.** When the agent proposes a change, the run pauses and an approval card appears: the action in plain words
    ("Roll back payments-api from v2.4.0 to v2.3.9"), what each argument means, why the agent chose it and the evidence
-   so far. Approve or reject, with an optional comment the agent reads.
-4. **Intervene at any time:** pause, resume, cancel, or send a message the agent reads at its next step.
+   so far. Approve or reject, with an optional comment the agent reads. The card then folds into a one-line receipt.
+4. **Intervene at any time:** pause, resume, cancel, or type a message in the composer (Enter sends); the agent reads it
+   at its next step.
 5. **Read the report:** root cause, severity, confidence, actions taken, follow-ups. A run is `completed` only if an approved
    fix was applied and confidence is at least 0.6; otherwise it is `escalated` to a human.
 

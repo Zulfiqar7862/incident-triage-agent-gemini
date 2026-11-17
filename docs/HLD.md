@@ -55,7 +55,7 @@ flowchart LR
 ### Components
 | Component | Responsibility | Key idea |
 |---|---|---|
-| **UI** (`frontend/`) | Start runs, watch the agent think (Thinking panel) and the trace, review changes on a plain-language approval card, pause/resume/cancel, send guidance; empty, loading and error states | Plain JS, SSE for the trace + 1.5 s polling for run state |
+| **UI** (`frontend/`) | Start runs, watch the agent think (Thinking panel) and the trace, review changes on a plain-language approval card (folds to a receipt once decided), pause/resume/cancel, send guidance from a composer; empty, loading and error states | Plain JS, SSE for the trace + 1.5 s polling for run state |
 | **API** (`src/incident_triage_agent/api/main.py`) | REST endpoints for runtime, tools, state; SSE stream | Thin: validates input, calls Runtime, returns DB state |
 | **Runtime** (`agent/runtime.py`) | Lifecycle of runs; one worker thread per active run; `recover()` on startup | Control = conditional status change in DB; worker notices at next step |
 | **Agent** (`agent/loop.py`) | Executes exactly one step and checkpoints; a thin loop over the five parts below | Stateless between steps: always starts from DB |
