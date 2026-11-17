@@ -76,7 +76,7 @@
         <div id="th-body" class="th-body"></div>
       </details>
 
-      <section id="approval" class="panel decision" aria-labelledby="ap-title" hidden>
+      <section id="approval" class="panel decision" aria-labelledby="ap-title" tabindex="-1" hidden>
         <div class="ap-head">
           <p class="ap-eyebrow">The agent asks for your approval</p>
           <span class="risk">Changes production</span>
@@ -111,6 +111,8 @@
         </div>
       </section>
 
+      <p id="ap-receipt" class="receipt" role="status" hidden></p>
+
       <section id="report" class="panel report" hidden></section>
 
       <div class="columns">
@@ -126,10 +128,13 @@
 
       <section class="panel">
         <h2>Message the agent</h2>
-        <div class="inline">
-          <input id="guidance" aria-label="Message for the agent"
-                 placeholder="For example: prefer rollback over restart. Read at its next step.">
-          <button id="send">Send to agent</button>
+        <div class="composer">
+          <textarea id="guidance" rows="2" aria-label="Message for the agent" aria-describedby="composer-hint"
+                    placeholder="For example: prefer rollback over restart. Read at its next step."></textarea>
+          <div class="composer-row">
+            <span id="composer-hint" class="hint">Enter sends, Shift+Enter adds a line</span>
+            <button id="send">Send to agent</button>
+          </div>
         </div>
       </section>
 

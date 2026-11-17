@@ -138,7 +138,14 @@ button[aria-busy="true"]::before { content: ""; display: inline-block; width: 10
   button[aria-busy="true"]::before { animation: spin 0.8s linear infinite; }
 }
 .actions { display: flex; gap: var(--s-2); flex-wrap: wrap; margin-top: var(--s-4); }
-.inline { display: flex; gap: var(--s-2); }
+
+/* composer: one large rounded card holding the text and its send row (agent-ui) */
+.composer { border: 1px solid var(--line-strong); border-radius: var(--r-card); background: var(--panel); padding: var(--s-3) var(--s-4); }
+.composer:focus-within { outline: 2px solid var(--accent-text); outline-offset: 2px; }   /* replaces the textarea's own ring */
+.composer textarea { display: block; width: 100%; min-height: 48px; max-height: 168px; field-sizing: content; resize: none;
+  font: inherit; color: var(--ink); background: transparent; border: 0; padding: 0; outline: none; }
+.composer-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); margin-top: var(--s-2); }
+.composer-row .hint { margin: 0; }
 
 
 /* ---------------------------------------------------------------- inputs */
@@ -192,6 +199,11 @@ select:disabled { color: var(--faint); }
 .findings li { margin-bottom: var(--s-1); }
 .decision input { background: var(--panel); }
 
+.receipt { margin: 0; padding: var(--s-3) var(--s-5); border: 1px solid var(--line); border-radius: var(--r-card);
+  background: var(--panel); color: var(--ink-2); }
+.receipt[hidden] { display: none; }
+.receipt .meta { color: var(--muted); }
+
 .report { border-left: 4px solid var(--green); }
 .report.escalated { border-left-color: var(--amber); }
 .report p { margin: var(--s-1) 0; }
@@ -223,6 +235,8 @@ select:disabled { color: var(--faint); }
 .ev-body .meta { color: var(--muted); font-size: var(--fs-caption); }
 .ev-body ol { margin: var(--s-1) 0 0; padding-left: var(--s-5); }
 .ev-thought .ev-body { font-style: italic; }
+.ev-guidance .ev-body { justify-self: start; max-width: 60ch; padding: var(--s-2) var(--s-3); border-radius: var(--r-card);
+  background: var(--wash); }   /* your own messages: a soft gray bubble; agent output stays unbubbled */
 .ev-fail .ev-kind, .ev-error .ev-kind { color: var(--red); }
 .ev-warning .ev-kind, .ev-retry .ev-kind, .ev-approval_requested .ev-kind, .ev-approval_decided .ev-kind { color: var(--amber); }
 .ev-run_finished .ev-kind, .ev-memory_saved .ev-kind { color: var(--green); }

@@ -153,8 +153,13 @@ function renderRun(r) {
   $("plan").innerHTML = planHtml(r.plan);
   $("infra").innerHTML = infraHtml(r.infra);
   const ap = r.status === "waiting_approval" ? r.pending_approval : null;
+  const appeared = ap && $("approval").hidden;
   $("approval").hidden = !ap;
   if (ap) renderApproval(ap, r);
+  if (appeared) $("approval").focus();              // move focus to the decision, never onto Approve itself
+  const decided = (r.approvals || []).filter((a) => a.status !== "pending").slice(-1)[0];
+  $("ap-receipt").hidden = !!ap || !decided;
+  if (decided && !ap) $("ap-receipt").innerHTML = receiptHtml(decided);
   const rep = r.report;
   $("report").hidden = !rep;
   if (rep) {
@@ -191,6 +196,13 @@ const FIELDS = {
   replicas: ["Replicas", "How many pods the service runs after the change"],
 };
 const FINDING = { get_metrics: "Metrics", get_logs: "Logs", get_recent_deployments: "Latest deploy", search_runbooks: "Runbook" };
+
+// After a decision the card collapses to a one-line receipt.
+function receiptHtml(a) {
+  const action = ACTIONS[a.tool];
+  const what = action ? action.title(a.args, {}) : `Run ${humanize(a.tool).toLowerCase()}`;
+  return `<b>You ${esc(a.status)}:</b> ${esc(what)}${a.comment ? ` <span class="meta">"${esc(a.comment)}"</span>` : ""}`;
+}
 
 function renderApproval(ap, r) {
   const action = ACTIONS[ap.tool];
@@ -407,6 +419,9 @@ function bindHandlers() {
     && act($("cancel"), "Cancelling…", () => post(`/api/runs/${current}/cancel`));
   $("approve").onclick = () => act($("approve"), "Approving…", () => decide("approve"));
   $("reject").onclick = () => act($("reject"), "Rejecting…", () => decide("reject"));
+  $("guidance").onkeydown = (e) => {               // Enter sends, Shift+Enter adds a line
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("send").click(); }
+  };
   $("send").onclick = () => {
     const m = $("guidance").value.trim();
     if (!m) return;
