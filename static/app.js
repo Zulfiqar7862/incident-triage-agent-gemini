@@ -66,11 +66,12 @@ function select(id) {
   $("empty").hidden = true;
   $("run").hidden = false;
   $("timeline").innerHTML = "";
+  think.reset();
   if (es) es.close();
   es = new EventSource(`/api/runs/${id}/stream`);
   es.addEventListener("trace", (m) => {
     const e = JSON.parse(m.data);
-    if (e.id > lastEventId) { lastEventId = e.id; addEvent(e); refresh(); }
+    if (e.id > lastEventId) { lastEventId = e.id; addEvent(e); think.add(e); refresh(); }
   });
   es.addEventListener("end", () => es.close());
   clearInterval(pollTimer);
@@ -87,6 +88,7 @@ async function refresh() {
   $("run-status").className = `status s-${r.status}`;
   $("run-status").textContent = label(r.status);
   $("st-step").textContent = r.step;
+  think.setRun(r);
   $("st-tokens").textContent = (r.tokens_in + r.tokens_out).toLocaleString();
   $("st-cost").textContent = "$" + r.cost_usd.toFixed(4);
   $("st-llm").textContent = r.llm_mode === "gemini" ? "Gemini" : "Offline mock";
@@ -149,5 +151,83 @@ function addEvent(e) {
   div.innerHTML = `<div class="ev-kind">${kind}<span class="ev-when">Step ${e.step}, ${time(e.ts)}</span></div><div class="ev-body">${html}</div>`;
   $("timeline").appendChild(div);
 }
+
+// ---------------------------------------------------------------------------
+// Thinking panel: a one-line live summary of what the agent is doing, built only
+// from trace events the backend already sends. Click to see the reasoning.
+const PHASES = ["Understanding the incident", "Planning", "Acting", "Concluding"];
+const think = {
+  events: [], status: "pending", step: 0, wasLive: false,
+  reset() { this.events = []; this.status = "pending"; this.step = 0; this.wasLive = false; $("thinking").open = false; this.render(); },
+  add(e) { this.events.push(e); this.render(); },
+  setRun(r) { this.status = r.status; this.step = r.step; this.render(); },
+  phase() {
+    const types = this.events.map((e) => e.type);
+    if (types.includes("run_finished")) return 3;
+    const last = this.events.filter((e) => ["tool_call", "approval_requested", "tool_result"].includes(e.type)).length;
+    if (last) {
+      const lastThought = [...this.events].reverse().find((e) => e.type === "thought");
+      return lastThought && /finish|report|writing the report|escalat|back to normal/i.test(lastThought.data.text) ? 3 : 2;
+    }
+    return types.includes("plan") ? 1 : 0;
+  },
+  line() {
+    const last = [...this.events].reverse().find((e) => ["thought", "tool_call", "approval_requested", "run_finished"].includes(e.type));
+    if (!last) return "Reading the alert";
+    if (last.type === "tool_call") return `Calling ${last.data.tool}`;
+    if (last.type === "approval_requested") return `Waiting for your decision on ${last.data.tool}`;
+    if (last.type === "run_finished") return `Concluded: ${last.data.report.root_cause}`;
+    return last.data.text;
+  },
+  seconds() {
+    if (this.events.length < 2) return 0;
+    return Math.max(1, Math.round(this.events[this.events.length - 1].ts - this.events[0].ts));
+  },
+  render() {
+    const live = ["running", "pending"].includes(this.status);
+    const panel = $("thinking");
+    panel.classList.toggle("live", live);
+    if (this.wasLive && !live) panel.open = false;     // collapse when the agent stops to wait or finishes
+    this.wasLive = live;
+    $("th-title").textContent = live ? "Thinking…"
+      : `Thought for ${this.seconds()}s · ${this.step} step${this.step === 1 ? "" : "s"}`;
+    $("th-line").textContent = live ? this.line() : (this.status === "waiting_approval" ? "Waiting for your decision" : label(this.status));
+    const p = this.phase();
+    $("th-phases").innerHTML = PHASES.map((name, i) =>
+      `<li class="${i < p ? "done" : i === p ? (live ? "now" : "done") : ""}">${name}</li>`).join("");
+    $("th-body").innerHTML = this.detail();
+  },
+  detail() {
+    const plans = this.events.filter((e) => e.type === "plan" || e.type === "plan_revised");
+    const plan = plans.length ? plans[plans.length - 1].data.steps : [];
+    const byStep = new Map();
+    for (const e of this.events) {
+      if (!["thought", "tool_call", "approval_requested", "tool_result", "approval_decided", "guidance"].includes(e.type)) continue;
+      if (!byStep.has(e.step)) byStep.set(e.step, []);
+      byStep.get(e.step).push(e);
+    }
+    let html = plan.length ? `<h3>Plan</h3><ol>${plan.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>` : "";
+    html += "<h3>Reasoning by step</h3>";
+    if (!byStep.size) html += '<p class="meta">Nothing yet. The agent is reading the alert.</p>';
+    for (const [step, evs] of byStep) {
+      const thought = evs.find((e) => e.type === "thought");
+      const chose = evs.filter((e) => e.type === "tool_call" || e.type === "approval_requested")
+        .map((e) => `${esc(e.data.tool)}${e.type === "approval_requested" ? " (needs approval)" : ""}`);
+      const results = evs.filter((e) => e.type === "tool_result").map((e) => esc(e.data.ok ? e.data.summary : e.data.error));
+      const human = evs.filter((e) => e.type === "approval_decided" || e.type === "guidance")
+        .map((e) => e.type === "guidance" ? `You said: ${esc(e.data.message)}` : `You ${esc(e.data.decision)} ${esc(e.data.tool)}`);
+      html += `<div class="th-step"><b>Step ${step}</b>${thought ? ` <span class="why">${esc(thought.data.text)}</span>` : ""}`
+        + (chose.length ? `<div class="meta">Chose: ${chose.join(", ")}</div>` : "")
+        + (results.length ? `<div class="meta">Learned: ${results.join("; ")}</div>` : "")
+        + (human.length ? `<div class="meta">${human.join("; ")}</div>` : "") + "</div>";
+    }
+    const done = this.events.find((e) => e.type === "run_finished");
+    if (done) {
+      const rep = done.data.report;
+      html += `<h3>Conclusion</h3><p>${esc(rep.root_cause)}</p><p class="meta">Confidence ${Math.round((rep.confidence || 0) * 100)}%. ${esc(rep.routing_reason || "")}</p>`;
+    }
+    return html;
+  },
+};
 
 init();

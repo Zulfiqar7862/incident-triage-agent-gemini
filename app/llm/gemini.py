@@ -79,7 +79,7 @@ class GeminiLLM:
                 return parse_response(resp, self.model, int((time.perf_counter() - started) * 1000))
             except LLMError:
                 raise
-            except Exception as e:  # 429 / 5xx / network: retry with exponential backoff
+            except Exception as e:  # 429 / 5xx / network: retry (server hint or exponential backoff)
                 last_err = e
                 if attempt < self.max_retries:
                     time.sleep(retry_delay(e, attempt, self.backoff) if self.backoff else 0)

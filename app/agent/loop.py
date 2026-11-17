@@ -214,7 +214,7 @@ class Agent:
 
         for call in reads:
             self._event(run_id, n, "tool_call", tool=call.name, args=call.args, risky=False)
-        if reads:  # parallel execution + aggregation of read-only tools
+        if reads:  # read-only tools are safe to run in parallel; results are aggregated into one step
             with ThreadPoolExecutor(max_workers=min(4, len(reads))) as pool:
                 results = list(pool.map(lambda c: self._run_tool(state["world"], c), reads))
             for rec in results:
