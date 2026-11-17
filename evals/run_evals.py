@@ -55,7 +55,7 @@ def main() -> int:
     base = Settings()
     tmp = tempfile.mkdtemp()
     s = Settings(gemini_api_key=base.gemini_api_key, gemini_model=base.gemini_model,
-                 db_path=f"{tmp}/eval.db", step_delay=0, tool_backoff=0.1)
+                 db_path=f"{tmp}/eval.db", step_delay=0, stream_delay=0, tool_backoff=0.1)
     db = DB(s.db_path)
     llm = make_llm(s)
     rt = Runtime(db, Agent(db, llm, build_registry(), s), s)

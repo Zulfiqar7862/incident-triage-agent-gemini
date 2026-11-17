@@ -12,3 +12,7 @@ data/
 evals/results/
 *.egg-info/
 build/
+*.log
+.ruff_cache/
+.mypy_cache/
+tmp/
