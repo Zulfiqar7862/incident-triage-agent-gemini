@@ -131,8 +131,9 @@ def _control(world: dict, **_: object) -> ToolResult:  # pragma: no cover
 
 def build_registry() -> ToolRegistry:
     r = ToolRegistry()
-    r.register(Tool("update_plan", "Write or revise your investigation plan (ordered list of short steps). "
-                    "Call this first, and again if you learn something that changes the plan.",
+    r.register(Tool("update_plan", "Write or revise your investigation plan: 3-6 short ordered steps, each saying "
+                    "what you will check and why. Call this first, and again if you learn something that "
+                    "changes the plan.",
                     {"type": "object", "properties": {"steps": {"type": "array", "items": {"type": "string"},
                                                                  "description": "Ordered plan steps"}},
                      "required": ["steps"]}, _control))

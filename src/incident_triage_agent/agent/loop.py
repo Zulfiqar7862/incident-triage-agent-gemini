@@ -18,6 +18,7 @@ import json
 from collections.abc import Callable
 
 from incident_triage_agent.agent import guards
+from incident_triage_agent.agent.answer import build_answer
 from incident_triage_agent.agent.approval import ApprovalGate, route
 from incident_triage_agent.agent.executor import Executor
 from incident_triage_agent.agent.planner import Planner
@@ -72,6 +73,8 @@ class Agent:
                 self.db.add_memory(svc, redact(rs.run["alert"])[:300], redact(str(report["root_cause"]))[:400],
                                    redact("; ".join(report.get("actions_taken") or ["none"]))[:300], rs.run_id)
             self._event(rs.run_id, rs.step, "memory_saved", services=report.get("affected_services") or [])
+        # the final answer is always the last event of a finished run
+        self._event(rs.run_id, rs.step, "answer", **build_answer(status, report).model_dump())
         return STOP
 
     # ------------------------------------------------------------------ 0) approvals

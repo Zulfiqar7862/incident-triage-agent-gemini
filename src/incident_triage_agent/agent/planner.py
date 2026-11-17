@@ -2,7 +2,8 @@
 
 Builds the context from durable state (context.py), recalls long-term memory
 for the services involved, and asks the model for its next decision: a plan,
-tool calls, or finish_triage. Raises LLMError if the model is unavailable.
+tool calls, or finish_triage. Until the run has a plan, the only tool offered is
+update_plan, so every run starts with a visible plan. Raises LLMError if the model is unavailable.
 """
 from __future__ import annotations
 
@@ -33,6 +34,9 @@ class Planner:
         """Return (decision, context layer sizes, memories used)."""
         memories = self.db.search_memory(self.services_in_scope(rs))
         prompt, layers = build_context(rs.run, rs.state, rs.plan, guidance, memories, self.s)
-        decision = self.llm.decide(SYSTEM_PROMPT, prompt, self.registry.schemas(),
+        tools = self.registry.schemas()
+        if not rs.plan:   # plan first: until a plan exists the model is offered only update_plan
+            tools = [t for t in tools if t["name"] == "update_plan"]
+        decision = self.llm.decide(SYSTEM_PROMPT, prompt, tools,
                                    {**rs.state, "plan": rs.plan, "guidance": guidance})
         return decision, layers, memories

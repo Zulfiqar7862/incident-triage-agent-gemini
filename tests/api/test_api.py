@@ -73,3 +73,16 @@ def test_errors(db_path):
         assert c.get("/api/runs/missing").status_code == 404
         assert c.post("/api/runs/missing/approval", json={"decision": "approve"}).status_code == 404
         assert c.post("/api/runs/x/approval", json={"decision": "maybe"}).status_code == 422
+
+
+def test_run_response_and_stream_include_plan_and_answer(db_path):
+    with client(db_path) as c:
+        rid = c.post("/api/runs", json={"scenario": "bad-deploy"}).json()["id"]
+        run = wait_status(c, rid)
+        assert run["plan"] and run["answer"] is None             # plan shown from the start, no answer yet
+        c.post(f"/api/runs/{rid}/approval", json={"decision": "approve"})
+        run = wait_status(c, rid, not_in=("running", "pending", "waiting_approval"))
+        assert set(run["answer"]) == {"diagnosis", "action_taken", "outcome", "confidence"}
+        with c.stream("GET", f"/api/runs/{rid}/stream") as s:
+            body = "".join(s.iter_text())
+        assert '"type": "plan"' in body and '"type": "answer"' in body

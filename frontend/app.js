@@ -114,12 +114,16 @@ const planHtml = (plan) => (plan || []).map((p) => `<li>${esc(p)}</li>`).join(""
 const infraHtml = (infra) => Object.entries(infra).map(([n, s]) =>
   `<tr><td><b>${esc(n)}</b></td><td>${statusPill(s.status)}</td><td>${esc(s.version)}</td><td>${s.replicas} pods</td></tr>`).join("");
 
-const reportHtml = (rep, status) => `<h2>${status === "escalated" ? "Handed to a human" : "Incident report"}</h2>
-      <p><b>Root cause:</b> ${esc(rep.root_cause)}</p>
-      <p><b>Severity:</b> ${esc(rep.severity)}. <b>Confidence:</b> ${Math.round((rep.confidence || 0) * 100)}%</p>
-      <p><b>Why this outcome:</b> ${esc(rep.routing_reason || "")}</p>
-      <p><b>Actions taken:</b> ${esc((rep.actions_taken || []).join("; ") || "none")}</p>
-      <p><b>Follow-ups:</b></p><ul>${(rep.follow_ups || []).map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`;
+const pct = (x) => `${Math.round((x || 0) * 100)}%`;
+// The answer reads like a short document: diagnosis first, then what was done and how it ended.
+const answerHtml = (a, rep) => `<h2>Answer</h2>
+      <p class="lead">${esc(a.diagnosis)}</p>
+      <dl class="answer-facts">
+        <div><dt>Action taken</dt><dd>${esc(a.action_taken)}</dd></div>
+        <div><dt>Outcome</dt><dd>${esc(a.outcome)}</dd></div>
+        <div><dt>Confidence</dt><dd>${pct(a.confidence)} <span class="meta">(severity ${esc(rep.severity)})</span></dd></div>
+      </dl>
+      ${(rep.follow_ups || []).length ? `<h3>Follow-ups</h3><ul>${rep.follow_ups.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}`;
 
 function renderRunList(runs) {
   // each row is a real <button>, so it is reachable with Tab and opens with Enter or Space
@@ -162,12 +166,8 @@ function renderRun(r) {
   const decided = (r.approvals || []).filter((a) => a.status !== "pending").slice(-1)[0];
   $("ap-receipt").hidden = !!ap || !decided;
   if (decided && !ap) $("ap-receipt").innerHTML = receiptHtml(decided);
-  const rep = r.report;
-  $("report").hidden = !rep;
-  if (rep) {
-    $("report").className = "panel report " + r.status;
-    $("report").innerHTML = reportHtml(rep, r.status);
-  }
+  $("answer").hidden = !r.answer;
+  if (r.answer) $("answer").innerHTML = answerHtml(r.answer, r.report);
 }
 
 // Approval card: a plain-language review of the proposed change, built only from
@@ -223,9 +223,9 @@ function renderApproval(ap, r) {
 
   const texts = [ap.reason, ...steps.map((s) => s.thought)].filter(Boolean).reverse();
   const m = texts.map((t) => t.match(/confidence[^0-9]{0,12}(\d+(?:\.\d+)?)\s*(%)?/i)).find(Boolean);
-  const pct = m ? Math.round(m[2] || parseFloat(m[1]) > 1 ? parseFloat(m[1]) : parseFloat(m[1]) * 100) : null;
-  $("ap-confidence").hidden = pct === null || pct > 100;
-  if (pct !== null) { $("ap-conf-value").textContent = `${pct}%`; $("ap-conf-bar").style.width = `${pct}%`; }
+  const confPct = m ? Math.round(m[2] || parseFloat(m[1]) > 1 ? parseFloat(m[1]) : parseFloat(m[1]) * 100) : null;
+  $("ap-confidence").hidden = confPct === null || confPct > 100;
+  if (confPct !== null) { $("ap-conf-value").textContent = `${confPct}%`; $("ap-conf-bar").style.width = `${confPct}%`; }
 
   $("ap-incident").textContent = `${r.title}. ${r.alert}`;
   const latest = new Map();
@@ -256,6 +256,7 @@ function describe(t, d) {
     case "error": return ["Error", esc(d.message)];
     case "status": return ["Status", `${label(d.from)} to <b>${label(d.to)}</b> (${esc(d.why)})`];
     case "run_finished": return ["Finished", `<b>${label(d.status)}</b>: ${esc(d.report.root_cause)}`];
+    case "answer": return ["Answer", `${esc(d.diagnosis)} <span class="meta">${esc(d.outcome)}. Confidence ${pct(d.confidence)}.</span>`];
     case "memory_saved": return ["Remembered", `Saved to long-term memory: ${esc(d.services.join(", "))}`];
     case "resumed_after_restart": return ["Resumed", "Server restarted; continued from the last checkpoint."];
     default: return [t, esc(JSON.stringify(d))];
@@ -322,17 +323,14 @@ const think = {
     $("th-body").innerHTML = this.detail();
   },
   detail() {
-    const plans = this.events.filter((e) => e.type === "plan" || e.type === "plan_revised");
-    const plan = plans.length ? plans[plans.length - 1].data.steps : [];
     const byStep = new Map();
     for (const e of this.events) {
       if (!["thought", "tool_call", "approval_requested", "tool_result", "approval_decided", "guidance"].includes(e.type)) continue;
       if (!byStep.has(e.step)) byStep.set(e.step, []);
       byStep.get(e.step).push(e);
     }
-    let html = plan.length ? `<h3>Plan</h3><ol>${plan.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>` : "";
-    html += "<h3>Reasoning by step</h3>";
-    if (!byStep.size) html += '<p class="meta">Nothing yet. The agent is reading the alert.</p>';
+    // the plan and the answer have their own blocks; this panel holds only the per-step reasoning
+    let html = byStep.size ? "" : '<p class="meta">Nothing yet. The agent is reading the alert.</p>';
     for (const [step, evs] of byStep) {
       const thought = evs.find((e) => e.type === "thought");
       const chose = evs.filter((e) => e.type === "tool_call" || e.type === "approval_requested")
@@ -344,11 +342,6 @@ const think = {
         + (chose.length ? `<div class="meta">Chose: ${chose.join(", ")}</div>` : "")
         + (results.length ? `<div class="meta">Learned: ${results.join("; ")}</div>` : "")
         + (human.length ? `<div class="meta">${human.join("; ")}</div>` : "") + "</div>";
-    }
-    const done = this.events.find((e) => e.type === "run_finished");
-    if (done) {
-      const rep = done.data.report;
-      html += `<h3>Conclusion</h3><p>${esc(rep.root_cause)}</p><p class="meta">Confidence ${Math.round((rep.confidence || 0) * 100)}%. ${esc(rep.routing_reason || "")}</p>`;
     }
     return html;
   },

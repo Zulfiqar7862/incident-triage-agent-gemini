@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from incident_triage_agent.agent.answer import build_answer
 from incident_triage_agent.agent.loop import Agent
 from incident_triage_agent.agent.runtime import ConflictError, Runtime
 from incident_triage_agent.config import Settings
@@ -78,6 +79,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None) -> Fast
         run["approvals"] = db.list_approvals(run["id"])
         run["steps"] = state.get("steps", [])
         run["notes"] = state.get("notes", [])
+        run["answer"] = build_answer(run["status"], run["report"]).model_dump() if run["report"] else None
         run["infra"] = {n: {"status": s["status"], "version": s["version"], "replicas": s["replicas"]}
                         for n, s in world.get("services", {}).items()}
         return run
