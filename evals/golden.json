@@ -1,10 +1,50 @@
 [
-  {"scenario": "bad-deploy",    "expect_status": "completed", "expect_action": "rollback_deployment",
-   "expect_args": {"service": "payments-api", "to_version": "v2.3.9"}, "root_cause_keywords": ["v2.4.0"]},
-  {"scenario": "memory-leak",   "expect_status": "completed", "expect_action": "restart_service",
-   "expect_args": {"service": "orders-worker"}, "root_cause_keywords": ["memory"]},
-  {"scenario": "traffic-spike", "expect_status": "completed", "expect_action": "scale_service",
-   "expect_args": {"service": "search-api"}, "root_cause_keywords": ["traffic"]},
-  {"scenario": "ghost-alert",   "expect_status": "escalated", "expect_action": null,
-   "expect_args": {}, "root_cause_keywords": []}
+ {
+  "scenario": "bad-deploy",
+  "expect_status": "completed",
+  "expect_action": [
+   "rollback_deployment"
+  ],
+  "expect_args": {
+   "service": "payments-api",
+   "to_version": "v2.3.9"
+  },
+  "root_cause_keywords": [
+   "v2.4.0"
+  ]
+ },
+ {
+  "scenario": "memory-leak",
+  "expect_status": "completed",
+  "expect_action": [
+   "restart_service",
+   "rollback_deployment"
+  ],
+  "expect_args": {
+   "service": "orders-worker"
+  },
+  "root_cause_keywords": [
+   "memory"
+  ]
+ },
+ {
+  "scenario": "traffic-spike",
+  "expect_status": "completed",
+  "expect_action": [
+   "scale_service"
+  ],
+  "expect_args": {
+   "service": "search-api"
+  },
+  "root_cause_keywords": [
+   "traffic"
+  ]
+ },
+ {
+  "scenario": "ghost-alert",
+  "expect_status": "escalated",
+  "expect_action": [],
+  "expect_args": {},
+  "root_cause_keywords": []
+ }
 ]

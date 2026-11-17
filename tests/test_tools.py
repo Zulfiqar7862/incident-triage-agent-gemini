@@ -39,3 +39,9 @@ def test_permanent_error_and_validation_are_not_retried():
 def test_runbook_search_returns_top_two_relevant():
     obs = execute_with_retry(reg.get("search_runbooks"), {}, {"query": "memory leak oomkilled restart"})
     assert obs["data"][0]["runbook"] == "memory-leak-oom" and len(obs["data"]) <= 2
+
+
+def test_rollback_of_leaky_release_also_fixes_memory_leak():
+    world = build_world("memory-leak")
+    obs = execute_with_retry(reg.get("rollback_deployment"), world, {"service": "orders-worker", "to_version": "v1.8.1"})
+    assert obs["ok"] and world["services"]["orders-worker"]["status"] == "healthy"

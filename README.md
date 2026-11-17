@@ -59,7 +59,7 @@ the agent must *not* invent a fix).
 | `make install` | create `.venv`, install `requirements.txt` (needs Python 3.11+) |
 | `make quickstart` | create `.env` if missing, print URLs, start server on :8000 |
 | `make run` | start server (no .env creation) |
-| `make test` | 34 pytest tests, offline (forces the mock LLM even if a key is set) |
+| `make test` | 35 pytest tests, offline (forces the mock LLM even if a key is set) |
 | `make eval` | golden-scenario eval (uses Gemini if key set, else mock) |
 | `make demo` | full run through **curl only** (start server first, in another terminal) |
 | `make clean` | delete `data/` (the SQLite database) and caches |
@@ -131,7 +131,7 @@ incident-triage-agent/
 ```
 
 ## 6. Verified results
-- `make test`: **34 passed** (offline, ~4 s).
+- `make test`: **35 passed** (offline, ~4 s).
 - `make eval` with the mock LLM: **100%** on 4 golden scenarios.
 - `make eval` with **live Gemini `gemini-3.5-flash-lite`**: first run 85% -> two real issues found and fixed:
   1. the free tier allows **15 requests/min**; one run hit 429 and went to `failed` (resumable, as designed) -> the

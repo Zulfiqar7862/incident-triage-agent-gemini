@@ -104,6 +104,9 @@ def rollback_deployment(world: dict, service: str, to_version: str) -> ToolResul
     svc["version"] = to_version
     if world.get("scenario") == "bad-deploy" and service == "payments-api":
         _heal(svc)
+    if world.get("scenario") == "memory-leak" and service == "orders-worker" and to_version == "v1.8.1":
+        _heal(svc)  # rolling back the release that added the unbounded cache also fixes the leak
+        svc["metrics"]["memory_pct"] = 42
     world["actions_applied"].append({"action": "rollback_deployment", "service": service, "to": to_version})
     return ToolResult(f"{service} rolled back to {to_version}", {"service": service, "version": to_version})
 
