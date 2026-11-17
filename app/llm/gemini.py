@@ -8,6 +8,7 @@ because nothing lives only in the SDK's memory.
 from __future__ import annotations
 
 import os
+import re
 import time
 
 from app.llm.base import LLMDecision, LLMError, ToolCall
@@ -39,10 +40,18 @@ def parse_response(resp, model: str, latency_ms: int) -> LLMDecision:
                        latency_ms=latency_ms, model=model)
 
 
+def retry_delay(err: Exception, attempt: int, backoff: float, cap: float = 60.0) -> float:
+    """Honour the server's hint on 429 ("Please retry in 47.7s" / retryDelay '47s'), else exponential backoff."""
+    m = re.search(r"retry in ([0-9.]+)s|retryDelay'?:? *'?([0-9.]+)s", str(err))
+    if m:
+        return min(cap, float(m.group(1) or m.group(2)) + 1)
+    return min(cap, backoff * (2 ** (attempt - 1)))
+
+
 class GeminiLLM:
     name = "gemini"
 
-    def __init__(self, api_key: str, model: str, max_retries: int = 3, backoff: float = 2.0, client=None):
+    def __init__(self, api_key: str, model: str, max_retries: int = 4, backoff: float = 2.0, client=None):
         self.model = model
         self.max_retries = max_retries
         self.backoff = backoff
@@ -73,5 +82,5 @@ class GeminiLLM:
             except Exception as e:  # 429 / 5xx / network: retry with exponential backoff
                 last_err = e
                 if attempt < self.max_retries:
-                    time.sleep(self.backoff * (2 ** (attempt - 1)))
+                    time.sleep(retry_delay(e, attempt, self.backoff) if self.backoff else 0)
         raise LLMError(f"Gemini call failed after {self.max_retries} attempts: {last_err}")

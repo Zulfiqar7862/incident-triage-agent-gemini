@@ -4,7 +4,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from app.llm.base import LLMError
-from app.llm.gemini import GeminiLLM, parse_response, to_function_declarations
+from app.llm.gemini import GeminiLLM, parse_response, retry_delay, to_function_declarations
 from app.tools.infra_tools import build_registry
 
 
@@ -57,3 +57,10 @@ def test_gemini_gives_up_with_llm_error():
 def test_empty_candidates_raise():
     with pytest.raises(LLMError):
         parse_response(NS(candidates=[], prompt_feedback="blocked"), "m", 1)
+
+
+def test_rate_limit_hint_is_honoured():
+    err = RuntimeError("429 RESOURCE_EXHAUSTED ... Please retry in 47.7s. {'retryDelay': '47s'}")
+    assert retry_delay(err, 1, 2.0) == 48.7
+    assert retry_delay(RuntimeError("503"), 3, 2.0) == 8.0
+    assert retry_delay(RuntimeError("retry in 500s"), 1, 2.0) == 60.0  # capped
